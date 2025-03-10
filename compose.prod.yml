@@ -1,0 +1,56 @@
+services:
+    pointeuse_web:
+        container_name: pointeuse_web_prod
+        build:
+            context: .
+            target: prod
+        restart: always
+        environment:
+            DATABASE_URL: ${DATABASE_URL}
+            # WEB_HOST_PORT: ${WEB_HOST_PORT}
+            # WEB_URL_ROOT: ${WEB_URL_ROOT}
+            NEXTAUTH_URL: ${NEXTAUTH_URL}
+            NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+            JWT_SECRET: ${JWT_SECRET}
+        volumes:
+            - .:/pointeuse
+            - /pointeuse/node_modules
+            - /pointeuse/.next
+        ports:
+            - ${WEB_HOST_PORT}:${WEB_DOCKER_PORT}
+        links:
+            - ${DB_HOST}
+        depends_on:
+            - ${DB_HOST}
+
+    pointeuse_db:
+        container_name: pointeuse_db_prod
+        image: mariadb:11.6.2
+        restart: always
+        environment:
+            MARIADB_ROOT_PASSWORD: ${ROOT_PASSWORD}
+            MARIADB_DATABASE: ${DB_NAME}
+            MARIADB_USER: ${DB_USER}
+            MARIADB_PASSWORD: ${DB_PASSWORD}
+            TZ: "Europe/Paris"
+        ports:
+            - ${DB_HOST_PORT}:${DB_DOCKER_PORT}
+        volumes:
+            - mysql_data:/var/lib/mysql
+
+    pointeuse_phpmyadmin:
+      container_name: pointeuse_phpmyadmin_prod
+      image: phpmyadmin:5.2.1
+      environment:
+        PMA_HOST: ${DB_HOST}
+      ports:
+        - ${PMA_HOST_PORT}:${PMA_DOCKER_PORT}
+      links:
+        - ${DB_HOST}
+      depends_on:
+        - ${DB_HOST}
+      restart: always
+
+volumes:
+    mysql_data:
+        driver: local
