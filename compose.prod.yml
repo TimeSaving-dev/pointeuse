@@ -1,4 +1,19 @@
 services:
+    nginx:
+        container_name: pointeuse_nginx_prod
+        image: nginx:1.25.4
+        restart: always
+        ports:
+            - "80:80"
+            - "443:443"
+        volumes:
+            - ./nginx:/etc/nginx/conf.d
+            - ./nginx/ssl:/etc/nginx/ssl
+        depends_on:
+            - pointeuse_web
+        networks:
+            - app_network
+
     pointeuse_web:
         container_name: pointeuse_web_prod
         build:
@@ -12,16 +27,20 @@ services:
             NEXTAUTH_URL: ${NEXTAUTH_URL}
             NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
             JWT_SECRET: ${JWT_SECRET}
+            SECURE_COOKIES: ${SECURE_COOKIES}
+            NODE_ENV: "production"
         volumes:
             - .:/pointeuse
             - /pointeuse/node_modules
             - /pointeuse/.next
-        ports:
-            - ${WEB_HOST_PORT}:${WEB_DOCKER_PORT}
+        # ports:  # Commenté car le trafic passe par Nginx
+        #     - ${WEB_HOST_PORT}:${WEB_DOCKER_PORT}
         links:
             - ${DB_HOST}
         depends_on:
             - ${DB_HOST}
+        networks:
+            - app_network
 
     pointeuse_db:
         container_name: pointeuse_db_prod
@@ -37,6 +56,8 @@ services:
             - ${DB_HOST_PORT}:${DB_DOCKER_PORT}
         volumes:
             - mysql_data:/var/lib/mysql
+        networks:
+            - app_network
 
     pointeuse_phpmyadmin:
       container_name: pointeuse_phpmyadmin_prod
@@ -50,6 +71,12 @@ services:
       depends_on:
         - ${DB_HOST}
       restart: always
+      networks:
+        - app_network
+
+networks:
+    app_network:
+        driver: bridge
 
 volumes:
     mysql_data:

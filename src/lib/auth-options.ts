@@ -73,7 +73,7 @@ export const authOptions: NextAuthOptions = {
         httpOnly: true,
         sameSite: "lax",
         path: "/",
-        secure: process.env.NODE_ENV === "production",
+        secure: process.env.SECURE_COOKIES === "true",
         maxAge: 7 * 24 * 60 * 60, // 7 jours, cohérent avec maxAge de session
       },
     },
@@ -82,7 +82,7 @@ export const authOptions: NextAuthOptions = {
       options: {
         sameSite: "lax",
         path: "/",
-        secure: process.env.NODE_ENV === "production",
+        secure: process.env.SECURE_COOKIES === "true",
       },
     },
     csrfToken: {
@@ -91,7 +91,7 @@ export const authOptions: NextAuthOptions = {
         httpOnly: true,
         sameSite: "lax",
         path: "/",
-        secure: process.env.NODE_ENV === "production",
+        secure: process.env.SECURE_COOKIES === "true",
       },
     },
   },
