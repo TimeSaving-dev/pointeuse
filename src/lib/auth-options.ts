@@ -74,7 +74,7 @@ export const authOptions: NextAuthOptions = {
         sameSite: "lax",
         path: "/",
         secure: process.env.SECURE_COOKIES === "true",
-        maxAge: 7 * 24 * 60 * 60, // 7 jours, cohérent avec maxAge de session
+        domain: process.env.NODE_ENV === "production" ? undefined : undefined, // Laisser undefined pour utiliser le domaine par défaut
       },
     },
     callbackUrl: {
@@ -83,6 +83,7 @@ export const authOptions: NextAuthOptions = {
         sameSite: "lax",
         path: "/",
         secure: process.env.SECURE_COOKIES === "true",
+        domain: process.env.NODE_ENV === "production" ? undefined : undefined, // Laisser undefined pour utiliser le domaine par défaut
       },
     },
     csrfToken: {
@@ -92,6 +93,7 @@ export const authOptions: NextAuthOptions = {
         sameSite: "lax",
         path: "/",
         secure: process.env.SECURE_COOKIES === "true",
+        domain: process.env.NODE_ENV === "production" ? undefined : undefined, // Laisser undefined pour utiliser le domaine par défaut
       },
     },
   },

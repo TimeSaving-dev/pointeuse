@@ -1,12 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
+// Générer un identifiant unique pour chaque requête
+function generateRequestId() {
+  return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+}
+
 export async function POST(request: NextRequest) {
+  const requestId = generateRequestId();
+  console.log(`[${requestId}] DÉBUT TRAITEMENT PAUSE - ${new Date().toISOString()}`);
+
   try {
     // Pour le MVP: récupérer userId directement du body
-    const { userId } = await request.json();
+    const { 
+      userId,
+      reason 
+    } = await request.json();
+
+    console.log(`[${requestId}] Données reçues: userId=${userId}, raison=${reason}`);
 
     if (!userId) {
+      console.log(`[${requestId}] ERREUR: ID utilisateur manquant`);
       return NextResponse.json(
         { error: "ID utilisateur requis" },
         { status: 400 }
@@ -14,16 +28,15 @@ export async function POST(request: NextRequest) {
     }
 
     // Utiliser directement l'ID fourni dans la requête si ce n'est pas "anonymous"
-    // Cela permet aux utilisateurs authentifiés d'utiliser leur vrai ID
     let userIdToUse = userId;
     
     // Ne créer un utilisateur démo que si l'ID est explicitement "anonymous" ou "demo-user"
     if (userId === "anonymous" || userId === "demo-user") {
       const demoUser = await getOrCreateDemoUser();
       userIdToUse = demoUser.id;
-      console.log("Utilisation d'un utilisateur de démonstration pour la pause:", userIdToUse);
+      console.log(`[${requestId}] Utilisation d'un utilisateur de démonstration: ${userIdToUse}`);
     } else {
-      console.log("Utilisation de l'ID utilisateur fourni pour la pause:", userIdToUse);
+      console.log(`[${requestId}] Utilisation du vrai ID utilisateur: ${userIdToUse}`);
       
       // Vérifier si l'utilisateur existe
       const userExists = await prisma.user.findUnique({
@@ -32,75 +45,106 @@ export async function POST(request: NextRequest) {
       });
       
       if (!userExists) {
-        console.error("L'utilisateur spécifié n'existe pas - ID:", userIdToUse);
+        console.error(`[${requestId}] ERREUR: Utilisateur non trouvé - ID: ${userIdToUse}`);
         return NextResponse.json(
           { error: "Utilisateur non trouvé. Veuillez vous reconnecter." },
           { status: 404 }
         );
       }
     }
-
-    // Vérifier si l'utilisateur a déjà fait un check-in aujourd'hui
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
     
-    const hasCheckedInToday = await prisma.checkIn.findFirst({
-      where: {
+    // Vérifier qu'il existe un check-in (l'utilisateur doit être pointé pour pouvoir faire une pause)
+    const lastCheckin = await prisma.checkIn.findFirst({
+      where: { userId: userIdToUse },
+      orderBy: { timestamp: 'desc' },
+    });
+    
+    console.log(`[${requestId}] Dernier check-in trouvé:`, lastCheckin ? 
+      `id=${lastCheckin.id}, timestamp=${lastCheckin.timestamp}, isReturn=${lastCheckin.isReturn}` : 
+      'Aucun check-in trouvé');
+    
+    if (!lastCheckin) {
+      console.log(`[${requestId}] ERREUR: Aucun check-in trouvé, impossible de faire une pause`);
+      return NextResponse.json(
+        { error: "Vous devez d'abord pointer votre arrivée avant de prendre une pause" },
+        { status: 400 }
+      );
+    }
+    
+    // Vérifier les pauses récentes pour éviter les doublons
+    const lastMinute = new Date(new Date().getTime() - 60 * 1000); // 60 secondes en arrière
+    const recentPauses = await prisma.pause.findMany({
+      where: { 
         userId: userIdToUse,
         timestamp: {
-          gte: today,
-        },
+          gte: lastMinute
+        }
       },
+      orderBy: { timestamp: 'desc' },
     });
 
-    if (!hasCheckedInToday) {
+    if (recentPauses.length > 0) {
+      console.log(`[${requestId}] ALERTE DOUBLON: Pause récente trouvée pour cet utilisateur dans la dernière minute`);
+      console.log(`[${requestId}] Pause récente: id=${recentPauses[0].id}, timestamp=${recentPauses[0].timestamp}`);
+      
+      // Retourner la pause existante plutôt que d'en créer une nouvelle
+      console.log(`[${requestId}] PRÉVENTION DOUBLON: Retour de la pause existante au lieu d'en créer une nouvelle`);
+      
+      console.log(`[${requestId}] FIN TRAITEMENT PAUSE - Doublon évité - ${new Date().toISOString()}`);
+      
+      return NextResponse.json({ 
+        success: true, 
+        message: "Vous êtes déjà en pause",
+        pause: recentPauses[0],
+        isDuplicate: true
+      });
+    }
+    
+    // Vérifier s'il n'y a pas déjà une pause active (dernière action = pause)
+    const lastPause = await prisma.pause.findFirst({
+      where: { userId: userIdToUse },
+      orderBy: { timestamp: 'desc' },
+    });
+    
+    console.log(`[${requestId}] Dernière pause trouvée:`, lastPause ? 
+      `id=${lastPause.id}, timestamp=${lastPause.timestamp}` : 
+      'Aucune pause trouvée');
+
+    // Si la dernière pause existe et est plus récente que le dernier check-in
+    // cela signifie que l'utilisateur est déjà en pause
+    if (lastPause && lastPause.timestamp > lastCheckin.timestamp) {
+      const lastPauseDate = new Date(lastPause.timestamp).toLocaleString();
+      console.log(`[${requestId}] ERREUR: Utilisateur déjà en pause depuis ${lastPauseDate}`);
       return NextResponse.json(
-        { error: "Vous devez d'abord faire un check-in avant de prendre une pause" },
+        { error: `Vous êtes déjà en pause depuis ${lastPauseDate}` },
         { status: 400 }
       );
     }
 
-    try {
-      // Créer l'enregistrement de pause avec la relation explicite
-      const pause = await prisma.pause.create({
-        data: {
-          user: {
-            connect: { id: userIdToUse }
-          }
-        },
-      });
+    console.log(`[${requestId}] CRÉATION PAUSE - Début`);
+    
+    // Créer l'enregistrement de pause
+    const pause = await prisma.pause.create({
+      data: {
+        user: {
+          connect: { id: userIdToUse }
+        }
+      },
+    });
 
-      return NextResponse.json({ 
-        success: true, 
-        message: "Bonne pause",
-        pause 
-      });
-    } catch (error) {
-      console.error("Erreur lors de la création de la pause:", error);
-      
-      // Si l'utilisateur n'existe pas, créer un utilisateur démo et réessayer
-      if (error && typeof error === 'object' && 'code' in error && error.code === 'P2025') {
-        const demoUser = await getOrCreateDemoUser();
-        
-        const pause = await prisma.pause.create({
-          data: {
-            user: {
-              connect: { id: demoUser.id }
-            }
-          },
-        });
-        
-        return NextResponse.json({ 
-          success: true, 
-          message: "Bonne pause",
-          pause 
-        });
-      } else {
-        throw error;  // Relancer l'erreur si ce n'est pas une erreur d'utilisateur non trouvé
-      }
-    }
+    // Stocker la raison dans un log mais pas dans la base de données
+    console.log(`[${requestId}] PAUSE CRÉÉE AVEC SUCCÈS - id=${pause.id}, timestamp=${pause.timestamp}, raison=${reason || "Non spécifié"}`);
+    console.log(`[${requestId}] FIN TRAITEMENT PAUSE - Succès - ${new Date().toISOString()}`);
+
+    return NextResponse.json({ 
+      success: true, 
+      message: "Bonne pause !",
+      pause
+    });
   } catch (error) {
-    console.error("Erreur lors de la pause:", error);
+    console.error(`[${requestId}] ERREUR CRITIQUE lors de la pause:`, error);
+    console.log(`[${requestId}] FIN TRAITEMENT PAUSE - Échec - ${new Date().toISOString()}`);
+    
     return NextResponse.json(
       { error: "Une erreur est survenue lors de l'enregistrement de la pause" },
       { status: 500 }

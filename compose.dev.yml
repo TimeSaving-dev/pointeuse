@@ -7,8 +7,7 @@ services:
         restart: always
         environment:
             DATABASE_URL: ${DATABASE_URL}
-            # WEB_HOST_PORT: ${WEB_HOST_PORT}
-            # WEB_URL_ROOT: ${WEB_URL_ROOT}
+            BASE_URL: ${BASE_URL}
             NEXTAUTH_URL: ${NEXTAUTH_URL}
             NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
             JWT_SECRET: ${JWT_SECRET}

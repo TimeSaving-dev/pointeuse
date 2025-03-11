@@ -3,7 +3,7 @@ import DashboardContent from "@/components/DashboardContent";
 
 export default async function DashboardPage() {
   const user = await requireAuth();
-  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost";
 
   return (
     <DashboardContent 

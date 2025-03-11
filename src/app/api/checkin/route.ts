@@ -4,6 +4,11 @@ import { prisma } from "@/lib/prisma";
 // Clé API OpenCage 
 const OPENCAGE_API_KEY = 'acf16ce087b7418e8f68cd640a207853';
 
+// Générer un identifiant unique pour chaque requête
+function generateRequestId() {
+  return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+}
+
 // Fonction pour obtenir l'adresse à partir des coordonnées
 async function getAddressFromCoordinates(latitude: number, longitude: number) {
   try {
@@ -29,6 +34,9 @@ async function getAddressFromCoordinates(latitude: number, longitude: number) {
 }
 
 export async function POST(request: NextRequest) {
+  const requestId = generateRequestId();
+  console.log(`[${requestId}] DÉBUT TRAITEMENT CHECK-IN - ${new Date().toISOString()}`);
+
   try {
     // Pour le MVP: récupérer userId directement du body
     const { 
@@ -43,17 +51,15 @@ export async function POST(request: NextRequest) {
       userId 
     } = await request.json();
 
+    console.log(`[${requestId}] Données reçues: userId=${userId}, latitude=${latitude}, longitude=${longitude}`);
+
     if (!userId) {
+      console.log(`[${requestId}] ERREUR: ID utilisateur manquant`);
       return NextResponse.json(
         { error: "ID utilisateur requis" },
         { status: 400 }
       );
     }
-
-    console.log("Données reçues pour check-in:", { 
-      latitude, longitude, accuracy, altitude, altitudeAccuracy, 
-      heading, speed, timestamp, userId 
-    });
 
     // Utiliser directement l'ID fourni dans la requête si ce n'est pas "anonymous"
     // Cela permet aux utilisateurs authentifiés d'utiliser leur vrai ID
@@ -63,9 +69,9 @@ export async function POST(request: NextRequest) {
     if (userId === "anonymous" || userId === "demo-user") {
       const demoUser = await getOrCreateDemoUser();
       userIdToUse = demoUser.id;
-      console.log("Utilisation d'un utilisateur de démonstration pour le check-in:", userIdToUse);
+      console.log(`[${requestId}] Utilisation d'un utilisateur de démonstration: ${userIdToUse}`);
     } else {
-      console.log("Utilisation de l'ID utilisateur fourni:", userIdToUse);
+      console.log(`[${requestId}] Utilisation du vrai ID utilisateur: ${userIdToUse}`);
       
       // Vérifier si l'utilisateur existe
       const userExists = await prisma.user.findUnique({
@@ -74,12 +80,45 @@ export async function POST(request: NextRequest) {
       });
       
       if (!userExists) {
-        console.error("L'utilisateur spécifié n'existe pas - ID:", userIdToUse);
+        console.error(`[${requestId}] ERREUR: Utilisateur non trouvé - ID: ${userIdToUse}`);
         return NextResponse.json(
           { error: "Utilisateur non trouvé. Veuillez vous reconnecter." },
           { status: 404 }
         );
       }
+    }
+
+    // Vérifier les check-ins récents pour éviter les doublons
+    const lastMinute = new Date(new Date().getTime() - 60 * 1000); // 60 secondes en arrière
+    const recentCheckins = await prisma.checkIn.findMany({
+      where: { 
+        userId: userIdToUse,
+        timestamp: {
+          gte: lastMinute
+        }
+      },
+      orderBy: { timestamp: 'desc' },
+    });
+
+    if (recentCheckins.length > 0) {
+      console.log(`[${requestId}] ALERTE DOUBLON: Check-in récent trouvé pour cet utilisateur dans la dernière minute`);
+      console.log(`[${requestId}] Check-in récent: id=${recentCheckins[0].id}, timestamp=${recentCheckins[0].timestamp}, isReturn=${recentCheckins[0].isReturn}`);
+      
+      // Retourner le check-in existant plutôt que d'en créer un nouveau
+      console.log(`[${requestId}] PRÉVENTION DOUBLON: Retour du check-in existant au lieu d'en créer un nouveau`);
+      
+      // Déterminer le message approprié en fonction du dernier check-in
+      const message = recentCheckins[0].isReturn ? "Vous avez déjà repris votre travail" : "Vous êtes déjà pointé";
+      
+      console.log(`[${requestId}] FIN TRAITEMENT CHECK-IN - Doublon évité - ${new Date().toISOString()}`);
+      
+      return NextResponse.json({ 
+        success: true, 
+        message,
+        checkIn: recentCheckins[0],
+        isDuplicate: true,
+        address: recentCheckins[0].address
+      });
     }
 
     // Vérifier si l'utilisateur a une pause active (dernière action = pause sans check-in après)
@@ -88,22 +127,47 @@ export async function POST(request: NextRequest) {
       orderBy: { timestamp: 'desc' },
     });
 
+    console.log(`[${requestId}] Dernière pause trouvée:`, lastPause ? 
+      `id=${lastPause.id}, timestamp=${lastPause.timestamp}` : 
+      'Aucune pause trouvée');
+
     const lastCheckin = await prisma.checkIn.findFirst({
       where: { userId: userIdToUse },
       orderBy: { timestamp: 'desc' },
     });
 
+    console.log(`[${requestId}] Dernier check-in trouvé:`, lastCheckin ? 
+      `id=${lastCheckin.id}, timestamp=${lastCheckin.timestamp}, isReturn=${lastCheckin.isReturn}` : 
+      'Aucun check-in trouvé');
+
     // Déterminer si c'est un retour de pause - s'assurer que c'est un booléen
     const isReturn = Boolean(lastPause && (!lastCheckin || lastPause.timestamp > lastCheckin.timestamp));
+    
+    console.log(`[${requestId}] Ce check-in est-il un retour de pause? ${isReturn ? 'OUI' : 'NON'}`);
+    
+    if (isReturn) {
+      console.log(`[${requestId}] DÉTAIL RETOUR DE PAUSE:`);
+      console.log(`[${requestId}] - Dernière pause: ${lastPause?.timestamp}`);
+      console.log(`[${requestId}] - Dernier check-in: ${lastCheckin?.timestamp || 'Aucun'}`);
+      if (lastPause && lastCheckin) {
+        const pauseTime = new Date(lastPause.timestamp).getTime();
+        const checkinTime = new Date(lastCheckin.timestamp).getTime();
+        console.log(`[${requestId}] - Différence de temps: ${(pauseTime - checkinTime) / 1000} secondes`);
+        console.log(`[${requestId}] - La pause est ${pauseTime > checkinTime ? 'après' : 'avant'} le dernier check-in`);
+      }
+    }
 
     // Obtenir l'adresse si les coordonnées sont fournies
     let address = null;
     if (latitude && longitude) {
       address = await getAddressFromCoordinates(latitude, longitude);
+      console.log(`[${requestId}] Adresse obtenue: ${address || 'Non disponible'}`);
     }
 
     // Créer l'enregistrement de check-in
     try {
+      console.log(`[${requestId}] CRÉATION CHECK-IN - Début`);
+      
       // Créer l'enregistrement de check-in avec la relation explicite
       const checkIn = await prisma.checkIn.create({
         data: {
@@ -118,9 +182,13 @@ export async function POST(request: NextRequest) {
         },
       });
 
+      console.log(`[${requestId}] CHECK-IN CRÉÉ AVEC SUCCÈS - id=${checkIn.id}, timestamp=${checkIn.timestamp}, isReturn=${checkIn.isReturn}`);
+
       // Déterminer le message approprié
       const message = isReturn ? "Vous avez repris votre travail" : "Bonne journée";
 
+      console.log(`[${requestId}] FIN TRAITEMENT CHECK-IN - Succès - ${new Date().toISOString()}`);
+      
       return NextResponse.json({ 
         success: true, 
         message,
@@ -128,10 +196,11 @@ export async function POST(request: NextRequest) {
         address
       });
     } catch (error) {
-      console.error("Erreur lors de la création du check-in:", error);
+      console.error(`[${requestId}] ERREUR lors de la création du check-in:`, error);
       
       // Si l'utilisateur n'existe pas, créer un utilisateur démo et réessayer
       if (error && typeof error === 'object' && 'code' in error && error.code === 'P2025') {
+        console.log(`[${requestId}] Tentative avec un utilisateur démo après erreur P2025`);
         const demoUser = await getOrCreateDemoUser();
         
         const checkIn = await prisma.checkIn.create({
@@ -147,7 +216,11 @@ export async function POST(request: NextRequest) {
           },
         });
         
+        console.log(`[${requestId}] CHECK-IN CRÉÉ AVEC UTILISATEUR DÉMO - id=${checkIn.id}`);
+        
         const message = isReturn ? "Vous avez repris votre travail" : "Bonne journée";
+        
+        console.log(`[${requestId}] FIN TRAITEMENT CHECK-IN - Succès avec utilisateur démo - ${new Date().toISOString()}`);
         
         return NextResponse.json({ 
           success: true, 
@@ -160,7 +233,9 @@ export async function POST(request: NextRequest) {
       }
     }
   } catch (error) {
-    console.error("Erreur lors du check-in:", error);
+    console.error(`[${requestId}] ERREUR CRITIQUE lors du check-in:`, error);
+    console.log(`[${requestId}] FIN TRAITEMENT CHECK-IN - Échec - ${new Date().toISOString()}`);
+    
     return NextResponse.json(
       { error: "Une erreur est survenue lors du check-in" },
       { status: 500 }

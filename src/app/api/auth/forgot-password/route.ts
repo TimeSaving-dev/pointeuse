@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
     });
 
     // Construire le lien de réinitialisation
-    const baseUrl = process.env.NEXTAUTH_URL || request.headers.get("origin") || "http://localhost:3000";
+    const baseUrl = process.env.NEXTAUTH_URL || request.headers.get("origin") || "http://localhost";
     const resetLink = `${baseUrl}/auth/reset-password?token=${token}`;
 
     // Envoyer l'email de réinitialisation

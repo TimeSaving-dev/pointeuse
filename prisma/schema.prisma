@@ -56,6 +56,7 @@ model Pause {
   userId      String
   user        User     @relation(fields: [userId], references: [id])
   timestamp   DateTime @default(now())
+  reason      String?  // Raison de la pause
 }
 
 model Checkout {
