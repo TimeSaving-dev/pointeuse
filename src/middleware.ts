@@ -3,7 +3,14 @@ import { getToken } from "next-auth/jwt";
 import type { NextRequest } from "next/server";
 
 export async function middleware(req: NextRequest) {
+  // Autoriser l'accès aux endpoints de diagnostic
+  if (req.nextUrl.pathname.startsWith("/api/debug-")) {
+    return NextResponse.next();
+  }
+
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
+  console.log("Middleware token:", token); // Ajout d'un log pour déboguer
+  
   const isAdminRoute = req.nextUrl.pathname.startsWith("/admin");
   const isDashboardRoute = req.nextUrl.pathname.startsWith("/dashboard-demo");
   const isAuthRoute = req.nextUrl.pathname.startsWith("/auth");
@@ -56,5 +63,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/", "/admin/:path*", "/dashboard-demo/:path*", "/auth/:path*", "/confirmation/:path*"],
+  matcher: ["/", "/admin/:path*", "/dashboard-demo/:path*", "/auth/:path*", "/confirmation/:path*", "/api/debug-:path*"],
 }; 
