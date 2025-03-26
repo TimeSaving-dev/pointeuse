@@ -1,0 +1,24 @@
+
+> temp_project@0.1.0 build
+> next build
+
+   ▲ Next.js 15.2.1
+   - Environments: .env
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully
+   Skipping linting
+   Checking validity of types ...
+Failed to compile.
+
+./src/app/api/checkin/route.ts:134:11
+Type error: 'error' is of type 'unknown'.
+
+[0m [90m 132 |[39m       [0m
+[0m [90m 133 |[39m       [90m// Si l'utilisateur n'existe pas, créer un utilisateur démo et réessayer[39m[0m
+[0m[31m[1m>[22m[39m[90m 134 |[39m       [36mif[39m (error[33m.[39mcode [33m===[39m [32m'P2025'[39m) {[0m
+[0m [90m     |[39m           [31m[1m^[22m[39m[0m
+[0m [90m 135 |[39m         [36mconst[39m demoUser [33m=[39m [36mawait[39m getOrCreateDemoUser()[33m;[39m[0m
+[0m [90m 136 |[39m         [0m
+[0m [90m 137 |[39m         [36mconst[39m checkIn [33m=[39m [36mawait[39m prisma[33m.[39mcheckIn[33m.[39mcreate({[0m
+Next.js build worker exited with code: 1 and signal: null

@@ -1,0 +1,95 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider     = "mysql"
+  url          = env("DATABASE_URL")
+  relationMode = "prisma"
+}
+
+// Enum pour le statut d'approbation du compte
+enum AccountStatus {
+  PENDING   // En attente d'approbation
+  APPROVED  // Approuvé par l'administrateur
+  REJECTED  // Rejeté par l'administrateur
+}
+
+model User {
+  id           String        @id @default(uuid())
+  email        String        @unique
+  password     String
+  name         String?
+  position     String?       // Poste de l'utilisateur
+  hourlyRate   String?       // Forfait horaire
+  company      String?       // Entreprise de l'utilisateur
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  accountStatus AccountStatus @default(PENDING)  // Statut d'approbation par défaut
+  isAdmin      Boolean       @default(false)     // Flag pour les utilisateurs administrateurs
+  checkIns     CheckIn[]
+  pauses       Pause[]
+  checkouts    Checkout[]
+  notifications Notification[] // Relation pour les notifications
+}
+
+model CheckIn {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  latitude    Float?
+  longitude   Float?
+  address     String?
+  timestamp   DateTime @default(now())
+  accuracy    Float?
+  isReturn    Boolean  @default(false) // Indique si c'est un retour de pause
+}
+
+model Pause {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  timestamp   DateTime @default(now())
+  reason      String?  // Raison de la pause
+}
+
+model Checkout {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  latitude    Float?
+  longitude   Float?
+  address     String?  // Adresse dérivée des coordonnées GPS
+  timestamp   DateTime @default(now())
+}
+
+// Nouveau modèle pour les notifications
+model Notification {
+  id          String   @id @default(uuid())
+  userId      String   // ID de l'utilisateur destinataire (admin)
+  user        User     @relation(fields: [userId], references: [id])
+  title       String
+  message     String
+  type        String   // Type de notification: "user_registration", etc.
+  read        Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  relatedId   String?  // ID lié à la notification (ex: ID de l'utilisateur inscrit)
+}
+
+// Modèle pour les réinitialisations de mot de passe
+model PasswordReset {
+  id        String   @id @default(uuid())
+  email     String
+  token     String   @unique
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  used      Boolean  @default(false)
+
+  @@index([email])
+}
