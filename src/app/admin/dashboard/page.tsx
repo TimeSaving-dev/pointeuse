@@ -9,6 +9,10 @@ import { RecentActivitiesTable } from "@/components/dashboard/RecentActivitiesTa
 import { UserManagement } from "@/components/dashboard/UserManagement";
 import { QRCodeDisplay } from "@/components/dashboard/QRCodeDisplay";
 import Link from "next/link";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { format } from "date-fns";
+import { fr } from "date-fns/locale";
 
 export default function AdminDashboardPage() {
   const [dashboardData, setDashboardData] = useState<any>(null);
@@ -174,6 +178,7 @@ export default function AdminDashboardPage() {
             )}
           </TabsTrigger>
           <TabsTrigger value="qrcodes">QR Codes</TabsTrigger>
+          <TabsTrigger value="history">Historique</TabsTrigger>
         </TabsList>
         
         <TabsContent value="overview" className="space-y-4">
@@ -270,6 +275,88 @@ export default function AdminDashboardPage() {
         <TabsContent value="qrcodes" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-1">
             <QRCodeDisplay />
+          </div>
+        </TabsContent>
+
+        <TabsContent value="history" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-1">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle>Historique des activités</CardTitle>
+                <div className="text-sm text-muted-foreground">
+                  {dashboardData?.recentActivities?.length || 0} entrée(s)
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="rounded-md border overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-muted/50">
+                        <TableHead className="font-semibold">Utilisateur</TableHead>
+                        <TableHead className="font-semibold">Date d'arrivée</TableHead>
+                        <TableHead className="font-semibold">Heure d'arrivée</TableHead>
+                        <TableHead className="font-semibold">Date de sortie</TableHead>
+                        <TableHead className="font-semibold">Heure de sortie</TableHead>
+                        <TableHead className="text-right font-semibold">Pauses</TableHead>
+                        <TableHead className="text-right font-semibold">Temps moyen/pause</TableHead>
+                        <TableHead className="text-right font-semibold">Heures travaillées</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {dashboardData?.recentActivities?.length > 0 ? (
+                        dashboardData.recentActivities.map((item: any) => {
+                          const isOngoing = !item.checkOutTimestamp;
+                          return (
+                            <TableRow key={item.id} className={isOngoing ? "bg-blue-50" : ""}>
+                              <TableCell>{item.userName}</TableCell>
+                              <TableCell>{item.checkInTimestamp ? format(new Date(item.checkInTimestamp), "dd/MM/yyyy", { locale: fr }) : "-"}</TableCell>
+                              <TableCell>{item.checkInTimestamp ? format(new Date(item.checkInTimestamp), "HH:mm", { locale: fr }) : "-"}</TableCell>
+                              <TableCell>
+                                {item.checkOutTimestamp 
+                                  ? format(new Date(item.checkOutTimestamp), "dd/MM/yyyy", { locale: fr }) 
+                                  : <span className="text-blue-600 font-medium">En cours</span>}
+                              </TableCell>
+                              <TableCell>
+                                {item.checkOutTimestamp 
+                                  ? format(new Date(item.checkOutTimestamp), "HH:mm", { locale: fr }) 
+                                  : <span className="text-blue-600 font-medium">En cours</span>}
+                              </TableCell>
+                              <TableCell className="text-right font-medium">{item.pauses?.length || 0}</TableCell>
+                              <TableCell className="text-right">
+                                {item.pauses?.length > 0 
+                                  ? format(new Date(item.averagePauseTime || 0), "HH:mm", { locale: fr }) 
+                                  : <span className="text-gray-500">--</span>}
+                              </TableCell>
+                              <TableCell className="text-right font-medium">
+                                {item.checkInTimestamp ? (
+                                  item.checkOutTimestamp 
+                                    ? format(new Date(item.totalWorkTime || 0), "HH:mm", { locale: fr })
+                                    : <span className="text-blue-600">
+                                        {format(
+                                          new Date(
+                                            new Date().getTime() - new Date(item.checkInTimestamp).getTime() - (item.totalPauseTime || 0)
+                                          ), 
+                                          "HH:mm", 
+                                          { locale: fr }
+                                        )} <small className="text-xs">(provisoire)</small>
+                                      </span>
+                                ) : <span className="text-gray-500">--</span>}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })
+                      ) : (
+                        <TableRow>
+                          <TableCell colSpan={8} className="text-center">
+                            Aucune donnée d&apos;historique disponible
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </TabsContent>
       </Tabs>
