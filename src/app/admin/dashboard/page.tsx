@@ -23,6 +23,8 @@ export default function AdminDashboardPage() {
   const [isResettingNotifications, setIsResettingNotifications] = useState(false);
   // État pour la période sélectionnée
   const [selectedPeriod, setSelectedPeriod] = useState<"day" | "week" | "month" | "year">("day");
+  // État pour le drill-down
+  const [focusedPeriod, setFocusedPeriod] = useState<{type: "week" | "month" | "year", value: string} | null>(null);
   
   // Fonction pour récupérer les notifications
   const fetchNotifications = async () => {
@@ -116,6 +118,79 @@ export default function AdminDashboardPage() {
   // Fonction pour changer la période sélectionnée
   const handlePeriodChange = (period: "day" | "week" | "month" | "year") => {
     setSelectedPeriod(period);
+    // Réinitialiser le focus lors du changement de période
+    setFocusedPeriod(null);
+  };
+
+  // Fonction pour le drill-down sur une période
+  const handleDrillDown = (item: any) => {
+    if (!item.isAggregated) return;
+    
+    // Si nous sommes déjà en vue journalière, ne rien faire
+    if (selectedPeriod === "day") return;
+    
+    const periodType = selectedPeriod;
+    const periodValue = item.id.split('-')[1]; // Format userId-periodValue
+    
+    setFocusedPeriod({ type: periodType as any, value: periodValue });
+  };
+
+  // Fonction pour revenir au niveau supérieur
+  const handleDrillUp = () => {
+    setFocusedPeriod(null);
+  };
+
+  // Fonction pour filtrer les données selon le focus
+  const getFilteredActivities = () => {
+    const aggregatedData = getAggregatedActivities();
+    
+    // Si aucun focus, retourner toutes les données
+    if (!focusedPeriod) return aggregatedData;
+    
+    // Sinon filtrer selon le focus
+    if (focusedPeriod.type === "week") {
+      // Pour un focus sur une semaine, afficher les journées de cette semaine
+      return dashboardData.recentActivities.filter((item: any) => {
+        if (!item.checkInTimestamp) return false;
+        
+        const date = new Date(item.checkInTimestamp);
+        const startOfWeek = new Date(date);
+        startOfWeek.setDate(date.getDate() - date.getDay() + (date.getDay() === 0 ? -6 : 1));
+        const formattedWeekStart = format(startOfWeek, "yyyy-MM-dd");
+        
+        return formattedWeekStart === focusedPeriod.value;
+      });
+    } else if (focusedPeriod.type === "month") {
+      // Pour un focus sur un mois, afficher les semaines ou journées de ce mois
+      return selectedPeriod === "week" 
+        ? aggregatedData.filter((item: any) => {
+            const [yearMonth] = focusedPeriod.value.split('-');
+            return item.id.includes(yearMonth);
+          })
+        : dashboardData.recentActivities.filter((item: any) => {
+            if (!item.checkInTimestamp) return false;
+            const formattedMonth = format(new Date(item.checkInTimestamp), "yyyy-MM");
+            return formattedMonth === focusedPeriod.value;
+          });
+    } else if (focusedPeriod.type === "year") {
+      // Pour un focus sur une année, afficher les mois ou semaines de cette année
+      return selectedPeriod === "month" 
+        ? aggregatedData.filter((item: any) => {
+            return item.id.includes(focusedPeriod.value);
+          })
+        : selectedPeriod === "week"
+          ? aggregatedData.filter((item: any) => {
+              const weekDate = new Date(item.periodStartDate);
+              return weekDate.getFullYear().toString() === focusedPeriod.value;
+            })
+          : dashboardData.recentActivities.filter((item: any) => {
+              if (!item.checkInTimestamp) return false;
+              const year = new Date(item.checkInTimestamp).getFullYear().toString();
+              return year === focusedPeriod.value;
+            });
+    }
+    
+    return aggregatedData;
   };
 
   // Fonction pour agréger les données selon la période sélectionnée
@@ -249,10 +324,33 @@ export default function AdminDashboardPage() {
     }
   };
 
+  // Fonction pour effectuer un drill-down automatique
+  const autoDrillDown = (periodType: "year" | "month" | "week") => {
+    if (periodType === "year") {
+      // Passer de l'année aux mois
+      setSelectedPeriod("month");
+      if (focusedPeriod?.value) {
+        setFocusedPeriod({ type: "year", value: focusedPeriod.value });
+      }
+    } else if (periodType === "month") {
+      // Passer du mois aux semaines
+      setSelectedPeriod("week");
+      if (focusedPeriod?.value) {
+        setFocusedPeriod({ type: "month", value: focusedPeriod.value });
+      }
+    } else if (periodType === "week") {
+      // Passer de la semaine aux jours
+      setSelectedPeriod("day");
+      if (focusedPeriod?.value) {
+        setFocusedPeriod({ type: "week", value: focusedPeriod.value });
+      }
+    }
+  };
+
   // Fonction pour exporter les données en CSV
   const exportToCSV = () => {
-    const aggregatedData = getAggregatedActivities();
-    if (!aggregatedData.length) return;
+    const data = getFilteredActivities();
+    if (!data.length) return;
     
     // Définir les en-têtes selon la période
     let headers = ["Utilisateur"];
@@ -265,7 +363,7 @@ export default function AdminDashboardPage() {
     }
     
     // Transformer les données
-    const csvData = aggregatedData.map((item: any) => {
+    const csvData = data.map((item: any) => {
       if (selectedPeriod === "day") {
         return {
           "Utilisateur": item.userName,
@@ -493,36 +591,86 @@ export default function AdminDashboardPage() {
                 </div>
               </CardHeader>
               <CardContent>
+                {/* Bandeau d'indication de la période active */}
+                <div className={`mb-4 px-4 py-2 rounded-md text-sm ${
+                  selectedPeriod === "day" ? "bg-blue-50 text-blue-700 border border-blue-200" : 
+                  selectedPeriod === "week" ? "bg-purple-50 text-purple-700 border border-purple-200" :
+                  selectedPeriod === "month" ? "bg-amber-50 text-amber-700 border border-amber-200" :
+                  "bg-green-50 text-green-700 border border-green-200"
+                }`}>
+                  <div className="flex items-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
+                      <rect width="18" height="18" x="3" y="4" rx="2" ry="2" />
+                      <line x1="16" x2="16" y1="2" y2="6" />
+                      <line x1="8" x2="8" y1="2" y2="6" />
+                      <line x1="3" x2="21" y1="10" y2="10" />
+                    </svg>
+                    <span className="font-medium">
+                      {selectedPeriod === "day" && "Vue journalière - Chaque ligne représente un jour de travail individuel"}
+                      {selectedPeriod === "week" && "Vue hebdomadaire - Données agrégées par semaine et par utilisateur"}
+                      {selectedPeriod === "month" && "Vue mensuelle - Données agrégées par mois et par utilisateur"}
+                      {selectedPeriod === "year" && "Vue annuelle - Données agrégées par année et par utilisateur"}
+                    </span>
+                  </div>
+                </div>
+                
                 <div className="mb-4 flex items-center justify-between">
                   <div className="flex items-center space-x-2">
                     <span className="text-sm font-medium">Période :</span>
                     <div className="inline-flex rounded-md border bg-muted p-1 text-muted-foreground">
                       <button 
-                        className={`inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ${selectedPeriod === "day" ? "bg-background text-foreground shadow-sm" : ""}`}
+                        className={`inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ${selectedPeriod === "day" ? "bg-blue-100 text-blue-800 border border-blue-300" : ""}`}
                         onClick={() => handlePeriodChange("day")}
-                        title="Afficher les données par jour"
+                        title="Afficher les données par jour - Chaque ligne représente une journée de travail"
                       >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                          <rect width="18" height="18" x="3" y="4" rx="2" ry="2" />
+                          <line x1="16" x2="16" y1="2" y2="6" />
+                          <line x1="8" x2="8" y1="2" y2="6" />
+                          <line x1="3" x2="21" y1="10" y2="10" />
+                          <circle cx="12" cy="16" r="2" />
+                        </svg>
                         Jour
                       </button>
                       <button 
-                        className={`inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ${selectedPeriod === "week" ? "bg-background text-foreground shadow-sm" : ""}`}
+                        className={`inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ${selectedPeriod === "week" ? "bg-purple-100 text-purple-800 border border-purple-300" : ""}`}
                         onClick={() => handlePeriodChange("week")}
-                        title="Afficher les données par semaine"
+                        title="Afficher les données par semaine - Les heures travaillées sont cumulées par semaine"
                       >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                          <rect width="18" height="18" x="3" y="4" rx="2" ry="2" />
+                          <line x1="16" x2="16" y1="2" y2="6" />
+                          <line x1="8" x2="8" y1="2" y2="6" />
+                          <line x1="3" x2="21" y1="10" y2="10" />
+                          <line x1="8" x2="16" y1="14" y2="14" />
+                          <line x1="8" x2="16" y1="18" y2="18" />
+                        </svg>
                         Semaine
                       </button>
                       <button 
-                        className={`inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ${selectedPeriod === "month" ? "bg-background text-foreground shadow-sm" : ""}`}
+                        className={`inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ${selectedPeriod === "month" ? "bg-amber-100 text-amber-800 border border-amber-300" : ""}`}
                         onClick={() => handlePeriodChange("month")}
-                        title="Afficher les données par mois"
+                        title="Afficher les données par mois - Les heures travaillées sont cumulées par mois"
                       >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                          <rect width="18" height="18" x="3" y="4" rx="2" ry="2" />
+                          <line x1="16" x2="16" y1="2" y2="6" />
+                          <line x1="8" x2="8" y1="2" y2="6" />
+                          <line x1="3" x2="21" y1="10" y2="10" />
+                        </svg>
                         Mois
                       </button>
                       <button 
-                        className={`inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ${selectedPeriod === "year" ? "bg-background text-foreground shadow-sm" : ""}`}
+                        className={`inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ${selectedPeriod === "year" ? "bg-green-100 text-green-800 border border-green-300" : ""}`}
                         onClick={() => handlePeriodChange("year")}
-                        title="Afficher les données par année"
+                        title="Afficher les données par année - Les heures travaillées sont cumulées par année"
                       >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                          <rect x="2" y="4" width="20" height="16" rx="2" />
+                          <path d="M8 2v4" />
+                          <path d="M16 2v4" />
+                          <path d="M2 10h20" />
+                        </svg>
                         Année
                       </button>
                     </div>
@@ -537,12 +685,12 @@ export default function AdminDashboardPage() {
                   
                   <div className="flex items-center gap-2">
                     <div className="text-xs text-muted-foreground">
-                      {getAggregatedActivities().length} enregistrement(s)
+                      {getFilteredActivities().length} enregistrement(s)
                     </div>
                     <button 
                       onClick={exportToCSV}
                       className="inline-flex items-center justify-center rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
-                      title="Exporter les données au format CSV"
+                      title="Exporter les données filtrées actuelles au format CSV"
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -554,10 +702,59 @@ export default function AdminDashboardPage() {
                   </div>
                 </div>
 
+                {/* Barre de navigation de drill-down */}
+                {focusedPeriod && (
+                  <div className="flex items-center mb-4 p-2 bg-slate-50 border rounded-md">
+                    <button onClick={handleDrillUp} className="mr-2 text-sm flex items-center text-blue-600 hover:text-blue-800 transition-colors">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                        <path d="m9 14 6-6-6-6"></path>
+                      </svg>
+                      Retour à la vue complète
+                    </button>
+                    <span className="text-sm text-slate-500 mx-2">|</span>
+                    <div className="flex items-center">
+                      <span className="text-sm font-medium">Vous consultez :</span>
+                      <span className={`ml-2 px-2 py-1 text-sm rounded-md ${
+                        focusedPeriod.type === "week" ? "bg-purple-100 text-purple-800" :
+                        focusedPeriod.type === "month" ? "bg-amber-100 text-amber-800" :
+                        "bg-green-100 text-green-800"
+                      }`}>
+                        {focusedPeriod.type === "week" && `Semaine du ${format(new Date(focusedPeriod.value), "dd/MM/yyyy", { locale: fr })}`}
+                        {focusedPeriod.type === "month" && `Mois de ${format(new Date(focusedPeriod.value + "-01"), "MMMM yyyy", { locale: fr })}`}
+                        {focusedPeriod.type === "year" && `Année ${focusedPeriod.value}`}
+                      </span>
+                    </div>
+                    
+                    {/* Boutons de navigation entre niveaux d'analyse */}
+                    <div className="ml-auto flex items-center gap-2">
+                      {focusedPeriod.type !== "week" && selectedPeriod !== "day" && (
+                        <button
+                          onClick={() => autoDrillDown(focusedPeriod.type)}
+                          className="text-xs flex items-center px-2 py-1 bg-blue-50 text-blue-700 rounded border border-blue-200 hover:bg-blue-100 transition-colors"
+                          title="Voir les données avec un niveau de détail plus fin"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                            <circle cx="11" cy="11" r="8" />
+                            <path d="m21 21-4.3-4.3" />
+                            <path d="M8 11h6" />
+                            <path d="M11 8v6" />
+                          </svg>
+                          Affiner
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 <div className="rounded-md border overflow-hidden">
                   <Table>
                     <TableHeader>
-                      <TableRow className="bg-muted/50">
+                      <TableRow className={`bg-muted/50 ${
+                        selectedPeriod === "day" ? "border-l-4 border-l-blue-400" : 
+                        selectedPeriod === "week" ? "border-l-4 border-l-purple-400" :
+                        selectedPeriod === "month" ? "border-l-4 border-l-amber-400" :
+                        "border-l-4 border-l-green-400"
+                      }`}>
                         <TableHead className="font-semibold">Utilisateur</TableHead>
                         {selectedPeriod === "day" ? (
                           <>
@@ -565,28 +762,44 @@ export default function AdminDashboardPage() {
                             <TableHead className="font-semibold">Heure d'arrivée</TableHead>
                             <TableHead className="font-semibold">Date de sortie</TableHead>
                             <TableHead className="font-semibold">Heure de sortie</TableHead>
-                            <TableHead className="text-right font-semibold">Pauses</TableHead>
-                            <TableHead className="text-right font-semibold">Temps moyen/pause</TableHead>
-                            <TableHead className="text-right font-semibold">Heures travaillées</TableHead>
+                            <TableHead className="text-right font-semibold" title="Nombre de pauses prises dans la journée">Pauses</TableHead>
+                            <TableHead className="text-right font-semibold" title="Durée moyenne de chaque pause">Temps moyen/pause</TableHead>
+                            <TableHead className="text-right font-semibold" title="Temps total travaillé dans la journée, hors pauses">Heures travaillées</TableHead>
                           </>
                         ) : (
                           <>
-                            <TableHead className="font-semibold">Période</TableHead>
-                            <TableHead className="font-semibold">Première arrivée</TableHead>
-                            <TableHead className="font-semibold">Dernier départ</TableHead>
-                            <TableHead className="text-right font-semibold">Nombre de pauses</TableHead>
-                            <TableHead className="text-right font-semibold">Temps moyen/pause</TableHead>
-                            <TableHead className="text-right font-semibold">Total heures travaillées</TableHead>
+                            <TableHead className="font-semibold">
+                              Période
+                              {selectedPeriod === "week" && 
+                                <span className="ml-2 inline-flex items-center rounded-md bg-purple-50 px-2 py-1 text-xs font-medium text-purple-700 ring-1 ring-inset ring-purple-700/10">Semaine</span>
+                              }
+                              {selectedPeriod === "month" && 
+                                <span className="ml-2 inline-flex items-center rounded-md bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-700/10">Mois</span>
+                              }
+                              {selectedPeriod === "year" && 
+                                <span className="ml-2 inline-flex items-center rounded-md bg-green-50 px-2 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-700/10">Année</span>
+                              }
+                            </TableHead>
+                            <TableHead className="font-semibold" title="Première arrivée enregistrée dans cette période">Première arrivée</TableHead>
+                            <TableHead className="font-semibold" title="Dernier départ enregistré dans cette période">Dernier départ</TableHead>
+                            <TableHead className="text-right font-semibold" title="Nombre total de pauses durant la période">Nombre de pauses</TableHead>
+                            <TableHead className="text-right font-semibold" title="Durée moyenne des pauses sur la période">Temps moyen/pause</TableHead>
+                            <TableHead className="text-right font-semibold" title="Temps total travaillé sur la période, hors pauses">
+                              Total heures travaillées
+                              <span className="ml-2 inline-flex items-center rounded-md bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">Cumulé</span>
+                            </TableHead>
                           </>
                         )}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {getAggregatedActivities().length > 0 ? (
-                        getAggregatedActivities().map((item: any) => {
+                      {getFilteredActivities().length > 0 ? (
+                        getFilteredActivities().map((item: any) => {
                           const isOngoing = !item.checkOutTimestamp;
                           return (
-                            <TableRow key={item.id} className={isOngoing ? "bg-blue-50" : ""}>
+                            <TableRow key={item.id} className={`${isOngoing ? "bg-blue-50" : ""} ${
+                              item.isAggregated ? "cursor-pointer hover:bg-gray-50 transition-colors group" : ""
+                            }`} onClick={() => item.isAggregated && handleDrillDown(item)}>
                               <TableCell>{item.userName}</TableCell>
                               
                               {selectedPeriod === "day" ? (
@@ -644,6 +857,22 @@ export default function AdminDashboardPage() {
                                   </TableCell>
                                   <TableCell className="text-right font-medium">
                                     {format(new Date(item.totalWorkTime || 0), "HH:mm", { locale: fr })}
+                                    {item.isAggregated && (
+                                      <div className="text-xs text-muted-foreground mt-1">
+                                        {selectedPeriod === "week" && "Total semaine"}
+                                        {selectedPeriod === "month" && "Total mois"}
+                                        {selectedPeriod === "year" && "Total année"}
+                                      </div>
+                                    )}
+                                    {/* Ajout d'un indicateur de drill-down pour les lignes agrégées */}
+                                    {item.isAggregated && (
+                                      <div className="hidden group-hover:flex justify-center items-center text-xs text-blue-600 mt-1">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                                          <polyline points="6 9 12 15 18 9"></polyline>
+                                        </svg>
+                                        Voir détails
+                                      </div>
+                                    )}
                                   </TableCell>
                                 </>
                               )}
@@ -659,6 +888,100 @@ export default function AdminDashboardPage() {
                       )}
                     </TableBody>
                   </Table>
+                </div>
+
+                {/* Légende explicative */}
+                <div className="mt-4 text-xs text-muted-foreground border-t pt-3">
+                  <h4 className="font-medium mb-2">Légende des périodes:</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 bg-blue-400 rounded-full"></div>
+                      <span><strong>Vue journalière:</strong> Affiche les heures travaillées par jour individuel</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 bg-purple-400 rounded-full"></div>
+                      <span><strong>Vue hebdomadaire:</strong> Cumule les heures travaillées par semaine</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 bg-amber-400 rounded-full"></div>
+                      <span><strong>Vue mensuelle:</strong> Cumule les heures travaillées par mois</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 bg-green-400 rounded-full"></div>
+                      <span><strong>Vue annuelle:</strong> Cumule les heures travaillées par année</span>
+                    </div>
+                  </div>
+                  
+                  {selectedPeriod !== "day" && (
+                    <div className="mt-2 flex items-start gap-2 border-t pt-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500 mt-0.5">
+                        <path d="M12 8h.01"></path>
+                        <path d="M12 12h.01"></path>
+                        <path d="M12 16h.01"></path>
+                        <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"></path>
+                      </svg>
+                      <div>
+                        <p className="font-medium text-amber-700">Remarque sur les données agrégées:</p>
+                        <p>En vue {selectedPeriod === "week" ? "hebdomadaire" : selectedPeriod === "month" ? "mensuelle" : "annuelle"}, 
+                        les heures travaillées représentent le cumul sur la période. Le temps moyen par pause est calculé sur l'ensemble des pauses de la période.</p>
+                        {selectedPeriod === "week" && (
+                          <p className="mt-1">Une semaine commence le lundi et se termine le dimanche.</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Information sur le drill-down */}
+                  <div className="mt-2 flex items-start gap-2 border-t pt-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-500 mt-0.5">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <line x1="12" y1="16" x2="12" y2="12"></line>
+                      <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                    </svg>
+                    <div>
+                      <p className="font-medium text-blue-700">Exploration des données (drill-down):</p>
+                      <p>Cliquez sur une ligne {selectedPeriod !== "day" ? "pour explorer les détails de cette période" : "agrégée pour voir ses détails"}. 
+                      Un indicateur "Voir détails" apparaît au survol des lignes cliquables.</p>
+                      <div className="mt-1 flex items-center gap-3">
+                        <div className="flex items-center gap-1">
+                          <span>Année</span>
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="9 18 15 12 9 6"></polyline>
+                          </svg>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span>Mois</span>
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="9 18 15 12 9 6"></polyline>
+                          </svg>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span>Semaine</span>
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="9 18 15 12 9 6"></polyline>
+                          </svg>
+                        </div>
+                        <div>
+                          <span>Jour</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {selectedPeriod === "day" && (
+                    <div className="mt-2 flex items-start gap-2 border-t pt-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-500 mt-0.5">
+                        <path d="M12 8h.01"></path>
+                        <path d="M12 12h.01"></path>
+                        <path d="M12 16h.01"></path>
+                        <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"></path>
+                      </svg>
+                      <div>
+                        <p className="font-medium text-blue-700">Remarque sur les journées en cours:</p>
+                        <p>Les journées sans heure de sortie sont marquées "En cours" et les heures travaillées sont calculées jusqu'à présent.</p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
