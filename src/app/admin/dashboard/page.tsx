@@ -21,6 +21,8 @@ export default function AdminDashboardPage() {
   const [notificationsCount, setNotificationsCount] = useState(0);
   const [notificationsList, setNotificationsList] = useState<{ id: string; message: string; createdAt: string }[]>([]);
   const [isResettingNotifications, setIsResettingNotifications] = useState(false);
+  // État pour la période sélectionnée
+  const [selectedPeriod, setSelectedPeriod] = useState<"day" | "week" | "month" | "year">("day");
   
   // Fonction pour récupérer les notifications
   const fetchNotifications = async () => {
@@ -109,6 +111,209 @@ export default function AdminDashboardPage() {
     } finally {
       setIsResettingNotifications(false);
     }
+  };
+
+  // Fonction pour changer la période sélectionnée
+  const handlePeriodChange = (period: "day" | "week" | "month" | "year") => {
+    setSelectedPeriod(period);
+  };
+
+  // Fonction pour agréger les données selon la période sélectionnée
+  const getAggregatedActivities = () => {
+    if (!dashboardData?.recentActivities?.length) return [];
+
+    // Si on affiche par jour, on retourne les données telles quelles
+    if (selectedPeriod === "day") {
+      return dashboardData.recentActivities;
+    }
+
+    // Pour les autres périodes, on agrège les données
+    const activities = [...dashboardData.recentActivities];
+    
+    // Fonction pour obtenir la clé de regroupement selon la période
+    const getGroupKey = (timestamp: string, userId: string) => {
+      const date = new Date(timestamp);
+      
+      switch (selectedPeriod) {
+        case "week":
+          // Début de la semaine (lundi)
+          const startOfWeek = new Date(date);
+          startOfWeek.setDate(date.getDate() - date.getDay() + (date.getDay() === 0 ? -6 : 1));
+          return `${userId}-${format(startOfWeek, "yyyy-MM-dd")}`;
+        
+        case "month":
+          // Premier jour du mois
+          return `${userId}-${format(date, "yyyy-MM")}`;
+        
+        case "year":
+          // Année
+          return `${userId}-${date.getFullYear()}`;
+        
+        default:
+          return `${userId}-${format(date, "yyyy-MM-dd")}`;
+      }
+    };
+
+    // Regrouper les données par période et par utilisateur
+    const groupedData: Record<string, any> = {};
+    
+    activities.forEach(activity => {
+      if (!activity.checkInTimestamp) return;
+      
+      const userId = activity.userId || activity.id;
+      const userName = activity.userName;
+      const groupKey = getGroupKey(activity.checkInTimestamp, userId);
+      
+      if (!groupedData[groupKey]) {
+        groupedData[groupKey] = {
+          id: groupKey,
+          userId,
+          userName,
+          checkInTimestamps: [],
+          checkOutTimestamps: [],
+          pauses: [],
+          totalWorkTime: 0,
+          periodStartDate: new Date(activity.checkInTimestamp),
+          periodLabel: getPeriodLabel(activity.checkInTimestamp)
+        };
+      }
+      
+      // Ajouter les timestamps d'arrivée et de sortie
+      groupedData[groupKey].checkInTimestamps.push(activity.checkInTimestamp);
+      if (activity.checkOutTimestamp) {
+        groupedData[groupKey].checkOutTimestamps.push(activity.checkOutTimestamp);
+      }
+      
+      // Ajouter les pauses
+      if (activity.pauses?.length) {
+        groupedData[groupKey].pauses = [...groupedData[groupKey].pauses, ...activity.pauses];
+      }
+      
+      // Ajouter le temps de travail
+      groupedData[groupKey].totalWorkTime += activity.totalWorkTime || 0;
+    });
+    
+    // Convertir l'objet en tableau et calculer les agrégations
+    return Object.values(groupedData).map((group: any) => {
+      // Trier les timestamps
+      group.checkInTimestamps.sort();
+      group.checkOutTimestamps.sort();
+      
+      // Prendre le premier check-in et le dernier check-out de la période
+      const firstCheckIn = group.checkInTimestamps[0];
+      const lastCheckOut = group.checkOutTimestamps.length ? 
+        group.checkOutTimestamps[group.checkOutTimestamps.length - 1] : null;
+      
+      // Calculer le nombre total de pauses
+      const pausesCount = group.pauses.length;
+      
+      // Calculer le temps moyen par pause
+      let averagePauseTime = 0;
+      if (pausesCount > 0) {
+        const totalPauseTime = group.pauses.reduce((total: number, pause: any) => 
+          total + (pause.duration || 0), 0);
+        averagePauseTime = totalPauseTime / pausesCount;
+      }
+      
+      return {
+        ...group,
+        checkInTimestamp: firstCheckIn,
+        checkOutTimestamp: lastCheckOut,
+        pausesCount,
+        averagePauseTime,
+        isAggregated: true
+      };
+    });
+  };
+
+  // Fonction pour obtenir le libellé de la période selon la date
+  const getPeriodLabel = (timestamp: string) => {
+    const date = new Date(timestamp);
+    
+    switch (selectedPeriod) {
+      case "week":
+        const startOfWeek = new Date(date);
+        startOfWeek.setDate(date.getDate() - date.getDay() + (date.getDay() === 0 ? -6 : 1));
+        const endOfWeek = new Date(startOfWeek);
+        endOfWeek.setDate(startOfWeek.getDate() + 6);
+        return `${format(startOfWeek, "dd/MM/yyyy", { locale: fr })} - ${format(endOfWeek, "dd/MM/yyyy", { locale: fr })}`;
+      
+      case "month":
+        return format(date, "MMMM yyyy", { locale: fr });
+      
+      case "year":
+        return format(date, "yyyy", { locale: fr });
+      
+      default:
+        return format(date, "dd/MM/yyyy", { locale: fr });
+    }
+  };
+
+  // Fonction pour exporter les données en CSV
+  const exportToCSV = () => {
+    const aggregatedData = getAggregatedActivities();
+    if (!aggregatedData.length) return;
+    
+    // Définir les en-têtes selon la période
+    let headers = ["Utilisateur"];
+    
+    if (selectedPeriod === "day") {
+      headers = [...headers, "Date d'arrivée", "Heure d'arrivée", "Date de sortie", "Heure de sortie", "Pauses", "Temps moyen/pause", "Heures travaillées"];
+    } else {
+      // Pour les vues agrégées
+      headers = [...headers, "Période", "Première arrivée", "Dernier départ", "Nombre de pauses", "Temps moyen/pause", "Total heures travaillées"];
+    }
+    
+    // Transformer les données
+    const csvData = aggregatedData.map((item: any) => {
+      if (selectedPeriod === "day") {
+        return {
+          "Utilisateur": item.userName,
+          "Date d'arrivée": item.checkInTimestamp ? format(new Date(item.checkInTimestamp), "dd/MM/yyyy", { locale: fr }) : "-",
+          "Heure d'arrivée": item.checkInTimestamp ? format(new Date(item.checkInTimestamp), "HH:mm", { locale: fr }) : "-",
+          "Date de sortie": item.checkOutTimestamp ? format(new Date(item.checkOutTimestamp), "dd/MM/yyyy", { locale: fr }) : "En cours",
+          "Heure de sortie": item.checkOutTimestamp ? format(new Date(item.checkOutTimestamp), "HH:mm", { locale: fr }) : "En cours",
+          "Pauses": item.pauses?.length || 0,
+          "Temps moyen/pause": item.pauses?.length > 0 ? format(new Date(item.averagePauseTime || 0), "HH:mm", { locale: fr }) : "--",
+          "Heures travaillées": item.totalWorkTime ? format(new Date(item.totalWorkTime), "HH:mm", { locale: fr }) : "--"
+        };
+      } else {
+        return {
+          "Utilisateur": item.userName,
+          "Période": item.periodLabel,
+          "Première arrivée": format(new Date(item.checkInTimestamp), "dd/MM/yyyy HH:mm", { locale: fr }),
+          "Dernier départ": item.checkOutTimestamp ? format(new Date(item.checkOutTimestamp), "dd/MM/yyyy HH:mm", { locale: fr }) : "En cours",
+          "Nombre de pauses": item.pausesCount,
+          "Temps moyen/pause": item.pausesCount > 0 ? format(new Date(item.averagePauseTime), "HH:mm", { locale: fr }) : "--",
+          "Total heures travaillées": format(new Date(item.totalWorkTime), "HH:mm", { locale: fr })
+        };
+      }
+    });
+    
+    // Convertir en CSV
+    let csvContent = headers.join(",") + "\n";
+    
+    csvData.forEach((row: any) => {
+      const values = headers.map(header => {
+        const value = row[header]?.toString() || "";
+        // Échapper les virgules en entourant de guillemets
+        return value.includes(",") ? `"${value}"` : value;
+      });
+      csvContent += values.join(",") + "\n";
+    });
+    
+    // Créer et télécharger le fichier
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    
+    link.setAttribute("href", url);
+    link.setAttribute("download", `historique_${selectedPeriod}_${format(new Date(), "yyyy-MM-dd")}.csv`);
+    link.style.visibility = "hidden";
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   if (loading) {
@@ -288,66 +493,166 @@ export default function AdminDashboardPage() {
                 </div>
               </CardHeader>
               <CardContent>
+                <div className="mb-4 flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm font-medium">Période :</span>
+                    <div className="inline-flex rounded-md border bg-muted p-1 text-muted-foreground">
+                      <button 
+                        className={`inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ${selectedPeriod === "day" ? "bg-background text-foreground shadow-sm" : ""}`}
+                        onClick={() => handlePeriodChange("day")}
+                        title="Afficher les données par jour"
+                      >
+                        Jour
+                      </button>
+                      <button 
+                        className={`inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ${selectedPeriod === "week" ? "bg-background text-foreground shadow-sm" : ""}`}
+                        onClick={() => handlePeriodChange("week")}
+                        title="Afficher les données par semaine"
+                      >
+                        Semaine
+                      </button>
+                      <button 
+                        className={`inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ${selectedPeriod === "month" ? "bg-background text-foreground shadow-sm" : ""}`}
+                        onClick={() => handlePeriodChange("month")}
+                        title="Afficher les données par mois"
+                      >
+                        Mois
+                      </button>
+                      <button 
+                        className={`inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ${selectedPeriod === "year" ? "bg-background text-foreground shadow-sm" : ""}`}
+                        onClick={() => handlePeriodChange("year")}
+                        title="Afficher les données par année"
+                      >
+                        Année
+                      </button>
+                    </div>
+                    {selectedPeriod !== "day" && (
+                      <div className="text-xs text-muted-foreground ml-2 bg-muted px-2 py-1 rounded-md">
+                        {selectedPeriod === "week" && "Données regroupées par semaine"}
+                        {selectedPeriod === "month" && "Données regroupées par mois"}
+                        {selectedPeriod === "year" && "Données regroupées par année"}
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs text-muted-foreground">
+                      {getAggregatedActivities().length} enregistrement(s)
+                    </div>
+                    <button 
+                      onClick={exportToCSV}
+                      className="inline-flex items-center justify-center rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+                      title="Exporter les données au format CSV"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="7 10 12 15 17 10"></polyline>
+                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                      </svg>
+                      Exporter CSV
+                    </button>
+                  </div>
+                </div>
+
                 <div className="rounded-md border overflow-hidden">
                   <Table>
                     <TableHeader>
                       <TableRow className="bg-muted/50">
                         <TableHead className="font-semibold">Utilisateur</TableHead>
-                        <TableHead className="font-semibold">Date d'arrivée</TableHead>
-                        <TableHead className="font-semibold">Heure d'arrivée</TableHead>
-                        <TableHead className="font-semibold">Date de sortie</TableHead>
-                        <TableHead className="font-semibold">Heure de sortie</TableHead>
-                        <TableHead className="text-right font-semibold">Pauses</TableHead>
-                        <TableHead className="text-right font-semibold">Temps moyen/pause</TableHead>
-                        <TableHead className="text-right font-semibold">Heures travaillées</TableHead>
+                        {selectedPeriod === "day" ? (
+                          <>
+                            <TableHead className="font-semibold">Date d'arrivée</TableHead>
+                            <TableHead className="font-semibold">Heure d'arrivée</TableHead>
+                            <TableHead className="font-semibold">Date de sortie</TableHead>
+                            <TableHead className="font-semibold">Heure de sortie</TableHead>
+                            <TableHead className="text-right font-semibold">Pauses</TableHead>
+                            <TableHead className="text-right font-semibold">Temps moyen/pause</TableHead>
+                            <TableHead className="text-right font-semibold">Heures travaillées</TableHead>
+                          </>
+                        ) : (
+                          <>
+                            <TableHead className="font-semibold">Période</TableHead>
+                            <TableHead className="font-semibold">Première arrivée</TableHead>
+                            <TableHead className="font-semibold">Dernier départ</TableHead>
+                            <TableHead className="text-right font-semibold">Nombre de pauses</TableHead>
+                            <TableHead className="text-right font-semibold">Temps moyen/pause</TableHead>
+                            <TableHead className="text-right font-semibold">Total heures travaillées</TableHead>
+                          </>
+                        )}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {dashboardData?.recentActivities?.length > 0 ? (
-                        dashboardData.recentActivities.map((item: any) => {
+                      {getAggregatedActivities().length > 0 ? (
+                        getAggregatedActivities().map((item: any) => {
                           const isOngoing = !item.checkOutTimestamp;
                           return (
                             <TableRow key={item.id} className={isOngoing ? "bg-blue-50" : ""}>
                               <TableCell>{item.userName}</TableCell>
-                              <TableCell>{item.checkInTimestamp ? format(new Date(item.checkInTimestamp), "dd/MM/yyyy", { locale: fr }) : "-"}</TableCell>
-                              <TableCell>{item.checkInTimestamp ? format(new Date(item.checkInTimestamp), "HH:mm", { locale: fr }) : "-"}</TableCell>
-                              <TableCell>
-                                {item.checkOutTimestamp 
-                                  ? format(new Date(item.checkOutTimestamp), "dd/MM/yyyy", { locale: fr }) 
-                                  : <span className="text-blue-600 font-medium">En cours</span>}
-                              </TableCell>
-                              <TableCell>
-                                {item.checkOutTimestamp 
-                                  ? format(new Date(item.checkOutTimestamp), "HH:mm", { locale: fr }) 
-                                  : <span className="text-blue-600 font-medium">En cours</span>}
-                              </TableCell>
-                              <TableCell className="text-right font-medium">{item.pauses?.length || 0}</TableCell>
-                              <TableCell className="text-right">
-                                {item.pauses?.length > 0 
-                                  ? format(new Date(item.averagePauseTime || 0), "HH:mm", { locale: fr }) 
-                                  : <span className="text-gray-500">--</span>}
-                              </TableCell>
-                              <TableCell className="text-right font-medium">
-                                {item.checkInTimestamp ? (
-                                  item.checkOutTimestamp 
-                                    ? format(new Date(item.totalWorkTime || 0), "HH:mm", { locale: fr })
-                                    : <span className="text-blue-600">
-                                        {format(
-                                          new Date(
-                                            new Date().getTime() - new Date(item.checkInTimestamp).getTime() - (item.totalPauseTime || 0)
-                                          ), 
-                                          "HH:mm", 
-                                          { locale: fr }
-                                        )} <small className="text-xs">(provisoire)</small>
-                                      </span>
-                                ) : <span className="text-gray-500">--</span>}
-                              </TableCell>
+                              
+                              {selectedPeriod === "day" ? (
+                                <>
+                                  <TableCell>{item.checkInTimestamp ? format(new Date(item.checkInTimestamp), "dd/MM/yyyy", { locale: fr }) : "-"}</TableCell>
+                                  <TableCell>{item.checkInTimestamp ? format(new Date(item.checkInTimestamp), "HH:mm", { locale: fr }) : "-"}</TableCell>
+                                  <TableCell>
+                                    {item.checkOutTimestamp 
+                                      ? format(new Date(item.checkOutTimestamp), "dd/MM/yyyy", { locale: fr }) 
+                                      : <span className="text-blue-600 font-medium">En cours</span>}
+                                  </TableCell>
+                                  <TableCell>
+                                    {item.checkOutTimestamp 
+                                      ? format(new Date(item.checkOutTimestamp), "HH:mm", { locale: fr }) 
+                                      : <span className="text-blue-600 font-medium">En cours</span>}
+                                  </TableCell>
+                                  <TableCell className="text-right font-medium">{item.pauses?.length || 0}</TableCell>
+                                  <TableCell className="text-right">
+                                    {item.pauses?.length > 0 
+                                      ? format(new Date(item.averagePauseTime || 0), "HH:mm", { locale: fr }) 
+                                      : <span className="text-gray-500">--</span>}
+                                  </TableCell>
+                                  <TableCell className="text-right font-medium">
+                                    {item.checkInTimestamp ? (
+                                      item.checkOutTimestamp 
+                                        ? format(new Date(item.totalWorkTime || 0), "HH:mm", { locale: fr })
+                                        : <span className="text-blue-600">
+                                            {format(
+                                              new Date(
+                                                new Date().getTime() - new Date(item.checkInTimestamp).getTime() - (item.totalPauseTime || 0)
+                                              ), 
+                                              "HH:mm", 
+                                              { locale: fr }
+                                            )} <small className="text-xs">(provisoire)</small>
+                                          </span>
+                                    ) : <span className="text-gray-500">--</span>}
+                                  </TableCell>
+                                </>
+                              ) : (
+                                <>
+                                  <TableCell className="font-medium">{item.periodLabel}</TableCell>
+                                  <TableCell>
+                                    {format(new Date(item.checkInTimestamp), "dd/MM/yyyy HH:mm", { locale: fr })}
+                                  </TableCell>
+                                  <TableCell>
+                                    {item.checkOutTimestamp 
+                                      ? format(new Date(item.checkOutTimestamp), "dd/MM/yyyy HH:mm", { locale: fr }) 
+                                      : <span className="text-blue-600 font-medium">En cours</span>}
+                                  </TableCell>
+                                  <TableCell className="text-right font-medium">{item.pausesCount || 0}</TableCell>
+                                  <TableCell className="text-right">
+                                    {item.pausesCount > 0 
+                                      ? format(new Date(item.averagePauseTime || 0), "HH:mm", { locale: fr }) 
+                                      : <span className="text-gray-500">--</span>}
+                                  </TableCell>
+                                  <TableCell className="text-right font-medium">
+                                    {format(new Date(item.totalWorkTime || 0), "HH:mm", { locale: fr })}
+                                  </TableCell>
+                                </>
+                              )}
                             </TableRow>
                           );
                         })
                       ) : (
                         <TableRow>
-                          <TableCell colSpan={8} className="text-center">
+                          <TableCell colSpan={selectedPeriod === "day" ? 8 : 7} className="text-center">
                             Aucune donnée d&apos;historique disponible
                           </TableCell>
                         </TableRow>
