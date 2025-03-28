@@ -13,6 +13,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
+import { getTestData, shouldUseTestData } from "./testData";
 
 export default function AdminDashboardPage() {
   const [dashboardData, setDashboardData] = useState<any>(null);
@@ -25,6 +26,12 @@ export default function AdminDashboardPage() {
   const [selectedPeriod, setSelectedPeriod] = useState<"day" | "week" | "month" | "year">("day");
   // État pour le drill-down
   const [focusedPeriod, setFocusedPeriod] = useState<{type: "week" | "month" | "year", value: string} | null>(null);
+  
+  // États pour la pagination
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [itemsPerPage, setItemsPerPage] = useState<number>(10);
+  const [totalPages, setTotalPages] = useState<number>(1);
+  const [pageLoading, setPageLoading] = useState<boolean>(false);
   
   // Fonction pour récupérer les notifications
   const fetchNotifications = async () => {
@@ -47,6 +54,16 @@ export default function AdminDashboardPage() {
     async function fetchDashboardData() {
       try {
         setLoading(true);
+        
+        // Vérifier si on doit utiliser les données de test
+        if (shouldUseTestData()) {
+          console.log("Utilisation des données de test pour le tableau de bord");
+          const testData = getTestData();
+          setDashboardData(testData);
+          setLoading(false);
+          return;
+        }
+        
         const response = await fetch("/api/admin/dashboard");
         
         if (!response.ok) {
@@ -120,6 +137,8 @@ export default function AdminDashboardPage() {
     setSelectedPeriod(period);
     // Réinitialiser le focus lors du changement de période
     setFocusedPeriod(null);
+    // Réinitialiser la pagination
+    setCurrentPage(1);
   };
 
   // Fonction pour le drill-down sur une période
@@ -133,11 +152,15 @@ export default function AdminDashboardPage() {
     const periodValue = item.id.split('-')[1]; // Format userId-periodValue
     
     setFocusedPeriod({ type: periodType as any, value: periodValue });
+    // Réinitialiser la pagination
+    setCurrentPage(1);
   };
 
   // Fonction pour revenir au niveau supérieur
   const handleDrillUp = () => {
     setFocusedPeriod(null);
+    // Réinitialiser la pagination
+    setCurrentPage(1);
   };
 
   // Fonction pour filtrer les données selon le focus
@@ -345,6 +368,68 @@ export default function AdminDashboardPage() {
         setFocusedPeriod({ type: "week", value: focusedPeriod.value });
       }
     }
+  };
+
+  // Fonction pour calculer le nombre total de pages
+  const calculateTotalPages = (dataLength: number, itemsPerPage: number) => {
+    return Math.ceil(dataLength / itemsPerPage);
+  };
+
+  // Fonction pour changer de page
+  const handlePageChange = (newPage: number) => {
+    // Vérifier que la nouvelle page est valide
+    if (newPage < 1 || newPage > totalPages) return;
+    
+    // Activer l'indicateur de chargement
+    setPageLoading(true);
+    
+    // Utiliser setTimeout pour simuler un court délai et montrer l'indicateur de chargement
+    setTimeout(() => {
+      setCurrentPage(newPage);
+      // Réinitialiser à la position de défilement en haut
+      window.scrollTo(0, 0);
+      setPageLoading(false);
+    }, 300);
+  };
+
+  // Fonction pour changer le nombre d'éléments par page
+  const handleItemsPerPageChange = (newItemsPerPage: number) => {
+    // Activer l'indicateur de chargement
+    setPageLoading(true);
+    
+    setTimeout(() => {
+      setItemsPerPage(newItemsPerPage);
+      
+      // Recalculer la page courante pour éviter des pages vides
+      const newTotalPages = calculateTotalPages(getFilteredActivities().length, newItemsPerPage);
+      const newCurrentPage = Math.min(currentPage, newTotalPages);
+      
+      setCurrentPage(newCurrentPage);
+      setPageLoading(false);
+    }, 300);
+  };
+
+  // Fonction pour obtenir la tranche de données à afficher selon la pagination
+  const getPaginatedData = () => {
+    const filteredData = getFilteredActivities();
+    
+    // Calculer le nombre total de pages
+    const newTotalPages = calculateTotalPages(filteredData.length, itemsPerPage);
+    if (newTotalPages !== totalPages) {
+      setTotalPages(newTotalPages);
+    }
+    
+    // Si la page courante dépasse le nombre total de pages, revenir à la dernière page
+    if (currentPage > newTotalPages && newTotalPages > 0) {
+      setCurrentPage(newTotalPages);
+      return [];
+    }
+    
+    // Calculer les indices de début et de fin pour la tranche
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = Math.min(startIndex + itemsPerPage, filteredData.length);
+    
+    return filteredData.slice(startIndex, endIndex);
   };
 
   // Fonction pour exporter les données en CSV
@@ -685,7 +770,7 @@ export default function AdminDashboardPage() {
                   
                   <div className="flex items-center gap-2">
                     <div className="text-xs text-muted-foreground">
-                      {getFilteredActivities().length} enregistrement(s)
+                      {getPaginatedData().length} enregistrement(s)
                     </div>
                     <button 
                       onClick={exportToCSV}
@@ -746,7 +831,7 @@ export default function AdminDashboardPage() {
                   </div>
                 )}
 
-                <div className="rounded-md border overflow-hidden">
+                <div className="rounded-md border overflow-hidden relative">
                   <Table>
                     <TableHeader>
                       <TableRow className={`bg-muted/50 ${
@@ -793,8 +878,8 @@ export default function AdminDashboardPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {getFilteredActivities().length > 0 ? (
-                        getFilteredActivities().map((item: any) => {
+                      {getPaginatedData().length > 0 ? (
+                        getPaginatedData().map((item: any) => {
                           const isOngoing = !item.checkOutTimestamp;
                           return (
                             <TableRow key={item.id} className={`${isOngoing ? "bg-blue-50" : ""} ${
@@ -888,6 +973,129 @@ export default function AdminDashboardPage() {
                       )}
                     </TableBody>
                   </Table>
+                </div>
+
+                {/* Indicateur de chargement de page */}
+                {pageLoading && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-white/80">
+                    <div className="flex flex-col items-center gap-2">
+                      <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-gray-900"></div>
+                      <p className="text-sm font-medium text-gray-500">Chargement des données...</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Contrôles de pagination */}
+                <div className="flex items-center justify-between border-t pt-4 mt-4">
+                  {/* Sélecteur du nombre d'éléments par page */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">Afficher</span>
+                    <select 
+                      className="h-8 w-16 rounded-md border border-input bg-background px-2 py-1 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      value={itemsPerPage}
+                      onChange={(e) => handleItemsPerPageChange(Number(e.target.value))}
+                    >
+                      <option value="10">10</option>
+                      <option value="25">25</option>
+                      <option value="50">50</option>
+                      <option value="100">100</option>
+                    </select>
+                    <span className="text-xs text-muted-foreground">éléments par page</span>
+                  </div>
+                  
+                  {/* Information sur les éléments affichés */}
+                  <div className="text-xs text-muted-foreground">
+                    Affichage de {getFilteredActivities().length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0} à {Math.min(currentPage * itemsPerPage, getFilteredActivities().length)} sur {getFilteredActivities().length} enregistrements
+                  </div>
+                  
+                  {/* Contrôles de navigation entre les pages */}
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => handlePageChange(1)}
+                      disabled={currentPage === 1}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-input bg-background p-0 text-sm font-medium ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                      title="Première page"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="11 17 6 12 11 7"></polyline>
+                        <polyline points="18 17 13 12 18 7"></polyline>
+                      </svg>
+                      <span className="sr-only">Première page</span>
+                    </button>
+                    
+                    <button
+                      onClick={() => handlePageChange(currentPage - 1)}
+                      disabled={currentPage === 1}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-input bg-background p-0 text-sm font-medium ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                      title="Page précédente"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="15 18 9 12 15 6"></polyline>
+                      </svg>
+                      <span className="sr-only">Page précédente</span>
+                    </button>
+                    
+                    {/* Affichage des numéros de pages */}
+                    <div className="flex items-center gap-1">
+                      {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                        // Logique pour afficher les pages autour de la page courante
+                        let pageNumber;
+                        if (totalPages <= 5) {
+                          // Si moins de 5 pages, afficher toutes les pages
+                          pageNumber = i + 1;
+                        } else if (currentPage <= 3) {
+                          // Si on est au début, afficher les 5 premières pages
+                          pageNumber = i + 1;
+                        } else if (currentPage >= totalPages - 2) {
+                          // Si on est à la fin, afficher les 5 dernières pages
+                          pageNumber = totalPages - 4 + i;
+                        } else {
+                          // Sinon, afficher 2 pages avant et 2 pages après la page courante
+                          pageNumber = currentPage - 2 + i;
+                        }
+                        
+                        return (
+                          <button
+                            key={pageNumber}
+                            onClick={() => handlePageChange(pageNumber)}
+                            className={`inline-flex h-8 w-8 items-center justify-center rounded-md p-0 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
+                              pageNumber === currentPage
+                                ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                                : "border border-input bg-background hover:bg-accent hover:text-accent-foreground"
+                            }`}
+                            aria-current={pageNumber === currentPage ? "page" : undefined}
+                          >
+                            {pageNumber}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    
+                    <button
+                      onClick={() => handlePageChange(currentPage + 1)}
+                      disabled={currentPage === totalPages || totalPages === 0}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-input bg-background p-0 text-sm font-medium ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                      title="Page suivante"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="9 18 15 12 9 6"></polyline>
+                      </svg>
+                      <span className="sr-only">Page suivante</span>
+                    </button>
+                    
+                    <button
+                      onClick={() => handlePageChange(totalPages)}
+                      disabled={currentPage === totalPages || totalPages === 0}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-input bg-background p-0 text-sm font-medium ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                      title="Dernière page"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="13 17 18 12 13 7"></polyline>
+                        <polyline points="6 17 11 12 6 7"></polyline>
+                      </svg>
+                      <span className="sr-only">Dernière page</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Légende explicative */}

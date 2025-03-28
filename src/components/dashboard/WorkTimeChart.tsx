@@ -16,10 +16,12 @@ interface WorkTimeChartProps {
 }
 
 export function WorkTimeChart({ data, title, className }: WorkTimeChartProps) {
-  // Formater les heures pour l'affichage
+  // Formater les heures pour l'affichage et s'assurer que averageHours existe
   const formattedData = data.map(item => ({
     ...item,
-    averageHours: Number(item.averageHours.toFixed(2))
+    averageHours: item.averageHours !== undefined 
+      ? Number(item.averageHours.toFixed(2)) 
+      : 0 // Valeur par défaut si averageHours n'existe pas
   }));
 
   return (
