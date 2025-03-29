@@ -526,6 +526,10 @@ export default function AdminDashboardPage() {
     let headers = ["Utilisateur"];
     
     if (selectedPeriod === "day") {
+      // Ajouter la colonne Adresse uniquement lorsqu'un collaborateur est sélectionné
+      if (selectedCollaborator) {
+        headers = [...headers, "Adresse"];
+      }
       headers = [...headers, "Date d'arrivée", "Heure d'arrivée", "Date de sortie", "Heure de sortie", "Pauses", "Temps moyen/pause", "Heures travaillées"];
     } else {
       // Pour les vues agrégées
@@ -535,8 +539,18 @@ export default function AdminDashboardPage() {
     // Transformer les données
     const csvData = data.map((item: any) => {
       if (selectedPeriod === "day") {
-        return {
+        const dayData: Record<string, string | number> = {
           "Utilisateur": item.userName,
+        };
+        
+        // Ajouter l'adresse uniquement si un collaborateur est sélectionné
+        if (selectedCollaborator) {
+          dayData["Adresse"] = item.location || "Adresse non disponible";
+        }
+        
+        // Ajouter les autres champs
+        return {
+          ...dayData,
           "Date d'arrivée": item.checkInTimestamp ? format(new Date(item.checkInTimestamp), "dd/MM/yyyy", { locale: fr }) : "-",
           "Heure d'arrivée": item.checkInTimestamp ? format(new Date(item.checkInTimestamp), "HH:mm", { locale: fr }) : "-",
           "Date de sortie": item.checkOutTimestamp ? format(new Date(item.checkOutTimestamp), "dd/MM/yyyy", { locale: fr }) : "En cours",
@@ -576,7 +590,16 @@ export default function AdminDashboardPage() {
     const url = URL.createObjectURL(blob);
     
     link.setAttribute("href", url);
-    link.setAttribute("download", `historique_${selectedPeriod}_${format(new Date(), "yyyy-MM-dd")}.csv`);
+    
+    // Ajuster le nom du fichier pour indiquer quand l'adresse est incluse
+    let fileName = `historique_${selectedPeriod}_${format(new Date(), "yyyy-MM-dd")}`;
+    if (selectedPeriod === "day" && selectedCollaborator) {
+      // Ajouter indication pour l'adresse incluse
+      const collaboratorName = getUniqueCollaborators().find(c => c.id === selectedCollaborator)?.name || 'collaborateur';
+      fileName = `historique_${selectedPeriod}_${collaboratorName.replace(/\s+/g, '_')}_avec_adresse_${format(new Date(), "yyyy-MM-dd")}`;
+    }
+    
+    link.setAttribute("download", `${fileName}.csv`);
     link.style.visibility = "hidden";
     
     document.body.appendChild(link);
@@ -1132,6 +1155,15 @@ export default function AdminDashboardPage() {
                         
                         {selectedPeriod === "day" ? (
                           <>
+                            {/* Ajout de la colonne d'adresse uniquement en vue journalière avec collaborateur sélectionné */}
+                            {selectedCollaborator && (
+                              <TableHead className="font-semibold" title="Adresse du lieu d'enregistrement">
+                                Adresse
+                                <span className="ml-2 inline-flex items-center rounded-md bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 ring-1 ring-inset ring-indigo-700/10">
+                                  Lieu
+                                </span>
+                              </TableHead>
+                            )}
                             <TableHead className="font-semibold">Date d'arrivée</TableHead>
                             <TableHead className="font-semibold">Heure d'arrivée</TableHead>
                             <TableHead className="font-semibold">Date de sortie</TableHead>
@@ -1219,6 +1251,9 @@ export default function AdminDashboardPage() {
                               
                               {selectedPeriod === "day" ? (
                                 <>
+                                  {selectedCollaborator && (
+                                    <TableCell>{item.location || "Adresse non disponible"}</TableCell>
+                                  )}
                                   <TableCell>{item.checkInTimestamp ? format(new Date(item.checkInTimestamp), "dd/MM/yyyy", { locale: fr }) : "-"}</TableCell>
                                   <TableCell>{item.checkInTimestamp ? format(new Date(item.checkInTimestamp), "HH:mm", { locale: fr }) : "-"}</TableCell>
                                   <TableCell>
