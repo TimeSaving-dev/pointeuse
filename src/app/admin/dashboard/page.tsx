@@ -33,6 +33,12 @@ export default function AdminDashboardPage() {
   const [totalPages, setTotalPages] = useState<number>(1);
   const [pageLoading, setPageLoading] = useState<boolean>(false);
   
+  // État pour le filtre par collaborateur
+  const [selectedCollaborator, setSelectedCollaborator] = useState<string | null>(null);
+  
+  // État pour le menu contextuel de navigation rapide
+  const [showContextMenu, setShowContextMenu] = useState<{x: number, y: number, id: string} | null>(null);
+
   // Fonction pour récupérer les notifications
   const fetchNotifications = async () => {
     try {
@@ -151,46 +157,122 @@ export default function AdminDashboardPage() {
     const periodType = selectedPeriod;
     const periodValue = item.id.split('-')[1]; // Format userId-periodValue
     
+    // Définir la période à explorer
     setFocusedPeriod({ type: periodType as any, value: periodValue });
+    
+    // Pour une meilleure expérience utilisateur, basculer automatiquement vers un niveau de détail plus précis
+    if (periodType === "year" && !selectedCollaborator) {
+      // Si on est sur une année, passer à la vue mensuelle
+      setSelectedPeriod("month");
+    } else if (periodType === "month" && !selectedCollaborator) {
+      // Si on est sur un mois, passer à la vue hebdomadaire
+      setSelectedPeriod("week");
+    } else if (periodType === "week") {
+      // Si on est sur une semaine, passer à la vue journalière
+      setSelectedPeriod("day");
+    }
+    
     // Réinitialiser la pagination
     setCurrentPage(1);
   };
 
   // Fonction pour revenir au niveau supérieur
   const handleDrillUp = () => {
-    setFocusedPeriod(null);
+    // Si nous avons un focus sur une période, le supprimer
+    if (focusedPeriod) {
+      setFocusedPeriod(null);
+      return;
+    }
+    
+    // Sinon, remonter d'un niveau de granularité
+    if (selectedPeriod === "day") {
+      setSelectedPeriod("week");
+    } else if (selectedPeriod === "week") {
+      setSelectedPeriod("month");
+    } else if (selectedPeriod === "month") {
+      setSelectedPeriod("year");
+    }
+    
     // Réinitialiser la pagination
     setCurrentPage(1);
   };
 
+  // Fonction pour effectuer un drill-down sur un niveau spécifique directement
+  const handleDirectDrillDown = (targetPeriod: "day" | "week" | "month" | "year", period?: { type: "week" | "month" | "year", value: string }) => {
+    setSelectedPeriod(targetPeriod);
+    if (period) {
+      setFocusedPeriod(period);
+    }
+    // Réinitialiser la pagination
+    setCurrentPage(1);
+  };
+
+  // Fonction pour obtenir la liste unique des collaborateurs
+  const getUniqueCollaborators = () => {
+    if (!dashboardData?.recentActivities?.length) return [];
+    
+    // Extraire tous les utilisateurs uniques des activités
+    const uniqueUsers = new Map();
+    dashboardData.recentActivities.forEach((activity: any) => {
+      if (activity.userId && activity.userName) {
+        uniqueUsers.set(activity.userId, activity.userName);
+      }
+    });
+    
+    // Convertir la Map en tableau d'objets pour l'affichage
+    const collaborators = Array.from(uniqueUsers.entries()).map(([id, name]) => ({
+      id,
+      name
+    }));
+    
+    // Trier par nom d'utilisateur
+    return collaborators.sort((a, b) => a.name.localeCompare(b.name));
+  };
+
   // Fonction pour filtrer les données selon le focus
   const getFilteredActivities = () => {
+    // Commencer avec les données agrégées selon la période
     const aggregatedData = getAggregatedActivities();
     
-    // Si aucun focus, retourner toutes les données
-    if (!focusedPeriod) return aggregatedData;
+    // Appliquer le filtre de collaborateur si sélectionné
+    let filteredByCollaborator = aggregatedData;
+    if (selectedCollaborator) {
+      filteredByCollaborator = aggregatedData.filter((item: any) => 
+        item.userId === selectedCollaborator
+      );
+    }
     
-    // Sinon filtrer selon le focus
+    // Si aucun focus, retourner les données filtrées par collaborateur
+    if (!focusedPeriod) return filteredByCollaborator;
+    
+    // Sinon continuer avec le filtrage par période comme avant
     if (focusedPeriod.type === "week") {
       // Pour un focus sur une semaine, afficher les journées de cette semaine
-      return dashboardData.recentActivities.filter((item: any) => {
-        if (!item.checkInTimestamp) return false;
-        
-        const date = new Date(item.checkInTimestamp);
-        const startOfWeek = new Date(date);
-        startOfWeek.setDate(date.getDate() - date.getDay() + (date.getDay() === 0 ? -6 : 1));
-        const formattedWeekStart = format(startOfWeek, "yyyy-MM-dd");
-        
-        return formattedWeekStart === focusedPeriod.value;
-      });
+      return dashboardData.recentActivities
+        .filter((item: any) => {
+          // Filtre par collaborateur
+          if (selectedCollaborator && item.userId !== selectedCollaborator) return false;
+          
+          if (!item.checkInTimestamp) return false;
+          
+          const date = new Date(item.checkInTimestamp);
+          const startOfWeek = new Date(date);
+          startOfWeek.setDate(date.getDate() - date.getDay() + (date.getDay() === 0 ? -6 : 1));
+          const formattedWeekStart = format(startOfWeek, "yyyy-MM-dd");
+          
+          return formattedWeekStart === focusedPeriod.value;
+        });
     } else if (focusedPeriod.type === "month") {
       // Pour un focus sur un mois, afficher les semaines ou journées de ce mois
       return selectedPeriod === "week" 
-        ? aggregatedData.filter((item: any) => {
+        ? filteredByCollaborator.filter((item: any) => {
             const [yearMonth] = focusedPeriod.value.split('-');
             return item.id.includes(yearMonth);
           })
         : dashboardData.recentActivities.filter((item: any) => {
+            // Filtre par collaborateur
+            if (selectedCollaborator && item.userId !== selectedCollaborator) return false;
+            
             if (!item.checkInTimestamp) return false;
             const formattedMonth = format(new Date(item.checkInTimestamp), "yyyy-MM");
             return formattedMonth === focusedPeriod.value;
@@ -198,22 +280,25 @@ export default function AdminDashboardPage() {
     } else if (focusedPeriod.type === "year") {
       // Pour un focus sur une année, afficher les mois ou semaines de cette année
       return selectedPeriod === "month" 
-        ? aggregatedData.filter((item: any) => {
+        ? filteredByCollaborator.filter((item: any) => {
             return item.id.includes(focusedPeriod.value);
           })
         : selectedPeriod === "week"
-          ? aggregatedData.filter((item: any) => {
+          ? filteredByCollaborator.filter((item: any) => {
               const weekDate = new Date(item.periodStartDate);
               return weekDate.getFullYear().toString() === focusedPeriod.value;
             })
           : dashboardData.recentActivities.filter((item: any) => {
+              // Filtre par collaborateur
+              if (selectedCollaborator && item.userId !== selectedCollaborator) return false;
+              
               if (!item.checkInTimestamp) return false;
               const year = new Date(item.checkInTimestamp).getFullYear().toString();
               return year === focusedPeriod.value;
             });
     }
     
-    return aggregatedData;
+    return filteredByCollaborator;
   };
 
   // Fonction pour agréger les données selon la période sélectionnée
@@ -499,6 +584,28 @@ export default function AdminDashboardPage() {
     document.body.removeChild(link);
   };
 
+  // Fonction pour changer le collaborateur sélectionné
+  const handleCollaboratorChange = (collaboratorId: string | null) => {
+    setSelectedCollaborator(collaboratorId);
+    // Réinitialiser la pagination
+    setCurrentPage(1);
+  };
+
+  // Fonction pour afficher le menu contextuel
+  const handleContextMenu = (e: React.MouseEvent, item: any) => {
+    if (!item.isAggregated) return;
+    
+    e.preventDefault(); // Empêcher le menu contextuel par défaut
+    const x = e.clientX;
+    const y = e.clientY;
+    setShowContextMenu({ x, y, id: item.id });
+  };
+
+  // Fonction pour masquer le menu contextuel
+  const handleHideContextMenu = () => {
+    setShowContextMenu(null);
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -767,10 +874,72 @@ export default function AdminDashboardPage() {
                       </div>
                     )}
                   </div>
+                </div>
+
+                {/* Sélecteur de collaborateur et indicateurs contextuels */}
+                <div className="mb-4 flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm font-medium">Collaborateur :</span>
+                    <select 
+                      className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      value={selectedCollaborator || ""}
+                      onChange={(e) => handleCollaboratorChange(e.target.value || null)}
+                    >
+                      <option value="">Tous les collaborateurs</option>
+                      {getUniqueCollaborators().map(collaborator => (
+                        <option key={collaborator.id} value={collaborator.id}>
+                          {collaborator.name}
+                        </option>
+                      ))}
+                    </select>
+                    
+                    {selectedCollaborator && (
+                      <button
+                        onClick={() => handleCollaboratorChange(null)}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-input bg-background p-0 text-sm font-medium ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                        title="Réinitialiser la sélection"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="18" y1="6" x2="6" y2="18"></line>
+                          <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                        <span className="sr-only">Réinitialiser</span>
+                      </button>
+                    )}
+                  </div>
                   
+                  {/* Indicateur de collaborateur actif */}
+                  <div className="flex items-center gap-2">
+                    {selectedCollaborator && (
+                      <div className="bg-indigo-50 text-indigo-700 px-3 py-1 rounded-md border border-indigo-200 text-sm flex items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
+                          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                          <circle cx="12" cy="7" r="4"></circle>
+                        </svg>
+                        Consultation des données de {getUniqueCollaborators().find(c => c.id === selectedCollaborator)?.name || 'collaborateur'}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mb-4 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <div className="text-xs text-muted-foreground">
-                      {getPaginatedData().length} enregistrement(s)
+                      {getPaginatedData().length} enregistrement(s) affichés
+                      {selectedPeriod !== "day" || selectedCollaborator ? (
+                        <span className="ml-1">
+                          sur {dashboardData?.recentActivities?.length || 0} au total 
+                          {selectedCollaborator && (
+                            <span className="inline-flex items-center ml-1 text-indigo-600">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                                <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                              </svg>
+                              filtrés
+                            </span>
+                          )}
+                        </span>
+                      ) : null}
                     </div>
                     <button 
                       onClick={exportToCSV}
@@ -789,10 +958,10 @@ export default function AdminDashboardPage() {
 
                 {/* Barre de navigation de drill-down */}
                 {focusedPeriod && (
-                  <div className="flex items-center mb-4 p-2 bg-slate-50 border rounded-md">
+                  <div className="flex items-center mb-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
                     <button onClick={handleDrillUp} className="mr-2 text-sm flex items-center text-blue-600 hover:text-blue-800 transition-colors">
                       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
-                        <path d="m9 14 6-6-6-6"></path>
+                        <path d="m15 18-6-6 6-6"></path>
                       </svg>
                       Retour à la vue complète
                     </button>
@@ -800,9 +969,9 @@ export default function AdminDashboardPage() {
                     <div className="flex items-center">
                       <span className="text-sm font-medium">Vous consultez :</span>
                       <span className={`ml-2 px-2 py-1 text-sm rounded-md ${
-                        focusedPeriod.type === "week" ? "bg-purple-100 text-purple-800" :
+                        focusedPeriod.type === "week" ? "bg-green-100 text-green-800" :
                         focusedPeriod.type === "month" ? "bg-amber-100 text-amber-800" :
-                        "bg-green-100 text-green-800"
+                        "bg-purple-100 text-purple-800"
                       }`}>
                         {focusedPeriod.type === "week" && `Semaine du ${format(new Date(focusedPeriod.value), "dd/MM/yyyy", { locale: fr })}`}
                         {focusedPeriod.type === "month" && `Mois de ${format(new Date(focusedPeriod.value + "-01"), "MMMM yyyy", { locale: fr })}`}
@@ -824,23 +993,143 @@ export default function AdminDashboardPage() {
                             <path d="M8 11h6" />
                             <path d="M11 8v6" />
                           </svg>
-                          Affiner
+                          Affiner la vue
                         </button>
                       )}
                     </div>
                   </div>
                 )}
 
-                <div className="rounded-md border overflow-hidden relative">
+                {/* Chemin de navigation (breadcrumb) pour le drill-down */}
+                <div className="mb-4 flex items-center text-sm">
+                  <div className="flex items-center">
+                    <button 
+                      onClick={() => {
+                        setSelectedPeriod("year");
+                        setFocusedPeriod(null);
+                      }}
+                      className={`inline-flex items-center px-2 py-1 rounded-md transition-colors ${
+                        selectedPeriod === "year" && !focusedPeriod 
+                          ? "bg-purple-100 text-purple-800 font-medium" 
+                          : "text-gray-600 hover:bg-gray-100"
+                      }`}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                        <rect x="2" y="4" width="20" height="16" rx="2" />
+                        <path d="M8 2v4" />
+                        <path d="M16 2v4" />
+                        <path d="M2 10h20" />
+                      </svg>
+                      Années
+                    </button>
+
+                    {(selectedPeriod === "month" || selectedPeriod === "week" || selectedPeriod === "day" || focusedPeriod?.type === "year") && (
+                      <>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mx-1 text-gray-400">
+                          <polyline points="9 18 15 12 9 6"></polyline>
+                        </svg>
+                        <button 
+                          onClick={() => {
+                            setSelectedPeriod("month");
+                            setFocusedPeriod(focusedPeriod?.type === "year" ? focusedPeriod : null);
+                          }}
+                          className={`inline-flex items-center px-2 py-1 rounded-md transition-colors ${
+                            selectedPeriod === "month" && (!focusedPeriod || focusedPeriod.type === "year")
+                              ? "bg-amber-100 text-amber-800 font-medium" 
+                              : "text-gray-600 hover:bg-gray-100"
+                          }`}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                            <rect width="18" height="18" x="3" y="4" rx="2" ry="2" />
+                            <line x1="16" x2="16" y1="2" y2="6" />
+                            <line x1="8" x2="8" y1="2" y2="6" />
+                            <line x1="3" x2="21" y1="10" y2="10" />
+                          </svg>
+                          Mois
+                        </button>
+                      </>
+                    )}
+
+                    {(selectedPeriod === "week" || selectedPeriod === "day" || focusedPeriod?.type === "month") && (
+                      <>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mx-1 text-gray-400">
+                          <polyline points="9 18 15 12 9 6"></polyline>
+                        </svg>
+                        <button 
+                          onClick={() => {
+                            setSelectedPeriod("week");
+                            setFocusedPeriod(focusedPeriod?.type === "month" ? focusedPeriod : null);
+                          }}
+                          className={`inline-flex items-center px-2 py-1 rounded-md transition-colors ${
+                            selectedPeriod === "week" && (!focusedPeriod || focusedPeriod.type === "month")
+                              ? "bg-green-100 text-green-800 font-medium" 
+                              : "text-gray-600 hover:bg-gray-100"
+                          }`}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                            <rect width="18" height="18" x="3" y="4" rx="2" ry="2" />
+                            <line x1="16" x2="16" y1="2" y2="6" />
+                            <line x1="8" x2="8" y1="2" y2="6" />
+                            <line x1="3" x2="21" y1="10" y2="10" />
+                            <line x1="8" x2="16" y1="14" y2="14" />
+                            <line x1="8" x2="16" y1="18" y2="18" />
+                          </svg>
+                          Semaines
+                        </button>
+                      </>
+                    )}
+
+                    {(selectedPeriod === "day" || focusedPeriod?.type === "week") && (
+                      <>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mx-1 text-gray-400">
+                          <polyline points="9 18 15 12 9 6"></polyline>
+                        </svg>
+                        <button 
+                          onClick={() => {
+                            setSelectedPeriod("day");
+                            setFocusedPeriod(focusedPeriod?.type === "week" ? focusedPeriod : null);
+                          }}
+                          className={`inline-flex items-center px-2 py-1 rounded-md transition-colors ${
+                            selectedPeriod === "day"
+                              ? "bg-blue-100 text-blue-800 font-medium" 
+                              : "text-gray-600 hover:bg-gray-100"
+                          }`}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                            <rect width="18" height="18" x="3" y="4" rx="2" ry="2" />
+                            <line x1="16" x2="16" y1="2" y2="6" />
+                            <line x1="8" x2="8" y1="2" y2="6" />
+                            <line x1="3" x2="21" y1="10" y2="10" />
+                            <circle cx="12" cy="16" r="2" />
+                          </svg>
+                          Jours
+                        </button>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Indicateur d'agrégation */}
+                  <div className="ml-auto text-xs text-muted-foreground">
+                    {selectedPeriod !== "day" && (
+                      <div className="inline-flex items-center bg-blue-50 text-blue-700 px-2 py-1 rounded-md">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                          <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+                          <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+                          <line x1="6" y1="6" x2="6" y2="6"></line>
+                          <line x1="6" y1="18" x2="6" y2="18"></line>
+                        </svg>
+                        <span>Données agrégées par {selectedPeriod === "week" ? "semaine" : selectedPeriod === "month" ? "mois" : "année"}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                
+                <div className="rounded-md border">
                   <Table>
-                    <TableHeader>
-                      <TableRow className={`bg-muted/50 ${
-                        selectedPeriod === "day" ? "border-l-4 border-l-blue-400" : 
-                        selectedPeriod === "week" ? "border-l-4 border-l-purple-400" :
-                        selectedPeriod === "month" ? "border-l-4 border-l-amber-400" :
-                        "border-l-4 border-l-green-400"
-                      }`}>
-                        <TableHead className="font-semibold">Utilisateur</TableHead>
+                    <TableHeader className={`${selectedPeriod === "day" ? "bg-blue-50" : selectedPeriod === "week" ? "bg-green-50" : selectedPeriod === "month" ? "bg-amber-50" : "bg-purple-50"}`}>
+                      <TableRow>
+                        <TableHead>Nom</TableHead>
+                        
                         {selectedPeriod === "day" ? (
                           <>
                             <TableHead className="font-semibold">Date d'arrivée</TableHead>
@@ -879,13 +1168,54 @@ export default function AdminDashboardPage() {
                     </TableHeader>
                     <TableBody>
                       {getPaginatedData().length > 0 ? (
-                        getPaginatedData().map((item: any) => {
+                        getPaginatedData().map((item: any, i) => {
                           const isOngoing = !item.checkOutTimestamp;
                           return (
-                            <TableRow key={item.id} className={`${isOngoing ? "bg-blue-50" : ""} ${
-                              item.isAggregated ? "cursor-pointer hover:bg-gray-50 transition-colors group" : ""
-                            }`} onClick={() => item.isAggregated && handleDrillDown(item)}>
-                              <TableCell>{item.userName}</TableCell>
+                            <TableRow 
+                              key={i}
+                              className={`
+                                ${isOngoing ? "border-l-4 border-l-blue-400" : ""}
+                                ${selectedPeriod === "day" ? "hover:bg-blue-50" : ""}
+                                ${selectedPeriod === "week" ? "hover:bg-green-50" : ""}
+                                ${selectedPeriod === "month" ? "hover:bg-amber-50" : ""}
+                                ${selectedPeriod === "year" ? "hover:bg-purple-50" : ""}
+                                ${i % 2 === 0 ? `${selectedPeriod === "day" ? "bg-blue-50/30" : selectedPeriod === "week" ? "bg-green-50/30" : selectedPeriod === "month" ? "bg-amber-50/30" : "bg-purple-50/30"}` : ""}
+                                ${item.isAggregated ? "cursor-pointer group" : ""}
+                                transition-colors
+                              `}
+                              onClick={() => item.isAggregated && handleDrillDown(item)}
+                              onContextMenu={(e) => item.isAggregated && handleContextMenu(e, item)}
+                            >
+                              <TableCell>
+                                <div className="flex items-center">
+                                  {item.userName}
+                                  {isOngoing && (
+                                    <span className="ml-2 inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-800">
+                                      <span className="mr-1 h-1.5 w-1.5 rounded-full bg-blue-500"></span>
+                                      En cours
+                                    </span>
+                                  )}
+                                  {item.isAggregated && (
+                                    <span className={`ml-2 inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                                      selectedPeriod === "week" ? "bg-green-100 text-green-800" : 
+                                      selectedPeriod === "month" ? "bg-amber-100 text-amber-800" : 
+                                      selectedPeriod === "year" ? "bg-purple-100 text-purple-800" : 
+                                      "bg-gray-100 text-gray-800"
+                                    }`}>
+                                      <span className={`mr-1 h-1.5 w-1.5 rounded-full ${
+                                        selectedPeriod === "week" ? "bg-green-500" : 
+                                        selectedPeriod === "month" ? "bg-amber-500" : 
+                                        selectedPeriod === "year" ? "bg-purple-500" : 
+                                        "bg-gray-500"
+                                      }`}></span>
+                                      {selectedPeriod === "week" ? "Semaine" : 
+                                       selectedPeriod === "month" ? "Mois" : 
+                                       selectedPeriod === "year" ? "Année" : 
+                                       "Agrégé"}
+                                    </span>
+                                  )}
+                                </div>
+                              </TableCell>
                               
                               {selectedPeriod === "day" ? (
                                 <>
@@ -908,19 +1238,48 @@ export default function AdminDashboardPage() {
                                       : <span className="text-gray-500">--</span>}
                                   </TableCell>
                                   <TableCell className="text-right font-medium">
-                                    {item.checkInTimestamp ? (
-                                      item.checkOutTimestamp 
-                                        ? format(new Date(item.totalWorkTime || 0), "HH:mm", { locale: fr })
-                                        : <span className="text-blue-600">
-                                            {format(
-                                              new Date(
-                                                new Date().getTime() - new Date(item.checkInTimestamp).getTime() - (item.totalPauseTime || 0)
-                                              ), 
-                                              "HH:mm", 
-                                              { locale: fr }
-                                            )} <small className="text-xs">(provisoire)</small>
-                                          </span>
-                                    ) : <span className="text-gray-500">--</span>}
+                                    {selectedPeriod === "day" ? (
+                                      item.checkInTimestamp ? (
+                                        item.checkOutTimestamp 
+                                          ? format(new Date(item.totalWorkTime || 0), "HH:mm", { locale: fr })
+                                          : <span className="text-blue-600">
+                                              {format(
+                                                new Date(
+                                                  new Date().getTime() - new Date(item.checkInTimestamp).getTime() - (item.totalPauseTime || 0)
+                                                ), 
+                                                "HH:mm", 
+                                                { locale: fr }
+                                              )} <small className="text-xs">(provisoire)</small>
+                                            </span>
+                                      ) : <span className="text-gray-500">--</span>
+                                    ) : (
+                                      <>
+                                        {format(new Date(item.totalWorkTime || 0), "HH:mm", { locale: fr })}
+                                        {item.isAggregated && (
+                                          <div className="text-xs text-muted-foreground mt-1">
+                                            {selectedPeriod === "week" && "Total semaine"}
+                                            {selectedPeriod === "month" && "Total mois"}
+                                            {selectedPeriod === "year" && "Total année"}
+                                          </div>
+                                        )}
+                                        {/* Ajout d'un bouton de détail explicite pour le drill-down */}
+                                        {item.isAggregated && (
+                                          <button 
+                                            onClick={(e) => {
+                                              e.stopPropagation(); // Éviter le double déclenchement
+                                              handleDrillDown(item);
+                                            }}
+                                            className="mt-2 w-full inline-flex items-center justify-center px-2 py-1 text-xs text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors border border-blue-200"
+                                          >
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                                              <circle cx="11" cy="11" r="8" />
+                                              <path d="m21 21-4.3-4.3" />
+                                            </svg>
+                                            Voir détails
+                                          </button>
+                                        )}
+                                      </>
+                                    )}
                                   </TableCell>
                                 </>
                               ) : (
@@ -975,14 +1334,150 @@ export default function AdminDashboardPage() {
                   </Table>
                 </div>
 
-                {/* Indicateur de chargement de page */}
-                {pageLoading && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-white/80">
-                    <div className="flex flex-col items-center gap-2">
-                      <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-gray-900"></div>
-                      <p className="text-sm font-medium text-gray-500">Chargement des données...</p>
+                {/* Message d'aide pour le drill-down */}
+                {selectedPeriod !== "day" && (
+                  <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-md text-sm text-blue-700">
+                    <div className="flex items-center mb-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <path d="M12 16v-4"></path>
+                        <path d="M12 8h.01"></path>
+                      </svg>
+                      <span className="font-medium">Astuce de navigation</span>
+                    </div>
+                    <p>
+                      En mode {selectedPeriod === "week" ? "semaine" : selectedPeriod === "month" ? "mois" : "année"}, 
+                      vous pouvez cliquer sur une ligne pour voir le détail 
+                      {selectedPeriod === "week" ? " journalier" : selectedPeriod === "month" ? " par semaine" : " par mois"} 
+                      de cette période.
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <div className="bg-white border border-blue-200 rounded-md px-2 py-1 inline-flex items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1 text-blue-600">
+                          <path d="M15 15H9v4l3-3 3 3v-4z"/>
+                          <rect width="18" height="18" x="3" y="3" rx="2"/>
+                          <path d="M9 9h6"/>
+                        </svg>
+                        <span>Clic gauche</span>
+                        <span className="mx-2 text-gray-500">→</span>
+                        <span>Zoom sur la période</span>
+                      </div>
+                      <div className="bg-white border border-blue-200 rounded-md px-2 py-1 inline-flex items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1 text-blue-600">
+                          <path d="M14 19a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v4z"/>
+                          <path d="M4 19a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v4z"/>
+                          <path d="M14 9a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1V5a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v4z"/>
+                          <path d="M4 9a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v4z"/>
+                        </svg>
+                        <span>Bouton "Voir détails"</span>
+                        <span className="mx-2 text-gray-500">→</span>
+                        <span>Accéder au niveau inférieur</span>
+                      </div>
+                      <div className="bg-white border border-blue-200 rounded-md px-2 py-1 inline-flex items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1 text-blue-600">
+                          <rect width="18" height="18" x="3" y="3" rx="2"/>
+                          <path d="M9 15v-6"/>
+                          <path d="M15 15v-6"/>
+                        </svg>
+                        <span>Bouton "Retour"</span>
+                        <span className="mx-2 text-gray-500">→</span>
+                        <span>Revenir au niveau supérieur</span>
+                      </div>
                     </div>
                   </div>
+                )}
+                
+                {/* Menu contextuel de navigation rapide */}
+                {showContextMenu && (
+                  <>
+                    <div 
+                      className="fixed inset-0 z-40" 
+                      onClick={handleHideContextMenu}
+                    />
+                    <div 
+                      className="fixed z-50 bg-white shadow-lg rounded-md border p-2 w-56"
+                      style={{ 
+                        top: `${showContextMenu.y}px`, 
+                        left: `${showContextMenu.x}px`,
+                      }}
+                    >
+                      <div className="text-xs font-semibold text-gray-500 mb-2 px-2">
+                        Options de navigation
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        {selectedPeriod === "year" && (
+                          <button 
+                            onClick={() => {
+                              const item = getFilteredActivities().find((a: any) => a.id === showContextMenu.id);
+                              if (item) handleDrillDown(item);
+                              handleHideContextMenu();
+                            }}
+                            className="flex items-center px-2 py-1.5 text-sm text-left hover:bg-blue-50 rounded-md"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2 text-blue-600">
+                              <rect width="18" height="18" x="3" y="4" rx="2" ry="2" />
+                              <line x1="16" x2="16" y1="2" y2="6" />
+                              <line x1="8" x2="8" y1="2" y2="6" />
+                              <line x1="3" x2="21" y1="10" y2="10" />
+                            </svg>
+                            Voir les mois de cette année
+                          </button>
+                        )}
+                        {selectedPeriod === "month" && (
+                          <button 
+                            onClick={() => {
+                              const item = getFilteredActivities().find((a: any) => a.id === showContextMenu.id);
+                              if (item) handleDrillDown(item);
+                              handleHideContextMenu();
+                            }}
+                            className="flex items-center px-2 py-1.5 text-sm text-left hover:bg-blue-50 rounded-md"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2 text-blue-600">
+                              <rect width="18" height="18" x="3" y="4" rx="2" ry="2" />
+                              <line x1="16" x2="16" y1="2" y2="6" />
+                              <line x1="8" x2="8" y1="2" y2="6" />
+                              <line x1="3" x2="21" y1="10" y2="10" />
+                              <line x1="8" x2="16" y1="14" y2="14" />
+                              <line x1="8" x2="16" y1="18" y2="18" />
+                            </svg>
+                            Voir les semaines de ce mois
+                          </button>
+                        )}
+                        {selectedPeriod === "week" && (
+                          <button 
+                            onClick={() => {
+                              const item = getFilteredActivities().find((a: any) => a.id === showContextMenu.id);
+                              if (item) handleDrillDown(item);
+                              handleHideContextMenu();
+                            }}
+                            className="flex items-center px-2 py-1.5 text-sm text-left hover:bg-blue-50 rounded-md"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2 text-blue-600">
+                              <rect width="18" height="18" x="3" y="4" rx="2" ry="2" />
+                              <line x1="16" x2="16" y1="2" y2="6" />
+                              <line x1="8" x2="8" y1="2" y2="6" />
+                              <line x1="3" x2="21" y1="10" y2="10" />
+                              <circle cx="12" cy="16" r="2" />
+                            </svg>
+                            Voir les jours de cette semaine
+                          </button>
+                        )}
+                        <div className="border-t border-gray-100 my-1" />
+                        <button 
+                          onClick={() => {
+                            handleDrillUp();
+                            handleHideContextMenu();
+                          }}
+                          className="flex items-center px-2 py-1.5 text-sm text-left hover:bg-gray-50 rounded-md"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2 text-gray-600">
+                            <path d="m15 18-6-6 6-6" />
+                          </svg>
+                          Retour à la vue complète
+                        </button>
+                      </div>
+                    </div>
+                  </>
                 )}
 
                 {/* Contrôles de pagination */}
@@ -1097,7 +1592,7 @@ export default function AdminDashboardPage() {
                     </button>
                   </div>
                 </div>
-
+                
                 {/* Légende explicative */}
                 <div className="mt-4 text-xs text-muted-foreground border-t pt-3">
                   <h4 className="font-medium mb-2">Légende des périodes:</h4>
@@ -1107,7 +1602,7 @@ export default function AdminDashboardPage() {
                       <span><strong>Vue journalière:</strong> Affiche les heures travaillées par jour individuel</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 bg-purple-400 rounded-full"></div>
+                      <div className="w-3 h-3 bg-green-400 rounded-full"></div>
                       <span><strong>Vue hebdomadaire:</strong> Cumule les heures travaillées par semaine</span>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1115,81 +1610,10 @@ export default function AdminDashboardPage() {
                       <span><strong>Vue mensuelle:</strong> Cumule les heures travaillées par mois</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 bg-green-400 rounded-full"></div>
+                      <div className="w-3 h-3 bg-purple-400 rounded-full"></div>
                       <span><strong>Vue annuelle:</strong> Cumule les heures travaillées par année</span>
                     </div>
                   </div>
-                  
-                  {selectedPeriod !== "day" && (
-                    <div className="mt-2 flex items-start gap-2 border-t pt-2">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500 mt-0.5">
-                        <path d="M12 8h.01"></path>
-                        <path d="M12 12h.01"></path>
-                        <path d="M12 16h.01"></path>
-                        <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"></path>
-                      </svg>
-                      <div>
-                        <p className="font-medium text-amber-700">Remarque sur les données agrégées:</p>
-                        <p>En vue {selectedPeriod === "week" ? "hebdomadaire" : selectedPeriod === "month" ? "mensuelle" : "annuelle"}, 
-                        les heures travaillées représentent le cumul sur la période. Le temps moyen par pause est calculé sur l'ensemble des pauses de la période.</p>
-                        {selectedPeriod === "week" && (
-                          <p className="mt-1">Une semaine commence le lundi et se termine le dimanche.</p>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* Information sur le drill-down */}
-                  <div className="mt-2 flex items-start gap-2 border-t pt-2">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-500 mt-0.5">
-                      <circle cx="12" cy="12" r="10"></circle>
-                      <line x1="12" y1="16" x2="12" y2="12"></line>
-                      <line x1="12" y1="8" x2="12.01" y2="8"></line>
-                    </svg>
-                    <div>
-                      <p className="font-medium text-blue-700">Exploration des données (drill-down):</p>
-                      <p>Cliquez sur une ligne {selectedPeriod !== "day" ? "pour explorer les détails de cette période" : "agrégée pour voir ses détails"}. 
-                      Un indicateur "Voir détails" apparaît au survol des lignes cliquables.</p>
-                      <div className="mt-1 flex items-center gap-3">
-                        <div className="flex items-center gap-1">
-                          <span>Année</span>
-                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <polyline points="9 18 15 12 9 6"></polyline>
-                          </svg>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <span>Mois</span>
-                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <polyline points="9 18 15 12 9 6"></polyline>
-                          </svg>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <span>Semaine</span>
-                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <polyline points="9 18 15 12 9 6"></polyline>
-                          </svg>
-                        </div>
-                        <div>
-                          <span>Jour</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {selectedPeriod === "day" && (
-                    <div className="mt-2 flex items-start gap-2 border-t pt-2">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-500 mt-0.5">
-                        <path d="M12 8h.01"></path>
-                        <path d="M12 12h.01"></path>
-                        <path d="M12 16h.01"></path>
-                        <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"></path>
-                      </svg>
-                      <div>
-                        <p className="font-medium text-blue-700">Remarque sur les journées en cours:</p>
-                        <p>Les journées sans heure de sortie sont marquées "En cours" et les heures travaillées sont calculées jusqu'à présent.</p>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </CardContent>
             </Card>
