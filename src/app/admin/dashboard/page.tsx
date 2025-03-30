@@ -5,15 +5,25 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { ActivityChart } from "@/components/dashboard/ActivityChart";
 import { WorkTimeChart } from "@/components/dashboard/WorkTimeChart";
+import { WorkDistributionChart } from "@/components/dashboard/WorkDistributionChart";
+import { ArrivalTimeChart } from "@/components/dashboard/ArrivalTimeChart";
 import { RecentActivitiesTable } from "@/components/dashboard/RecentActivitiesTable";
 import { UserManagement } from "@/components/dashboard/UserManagement";
 import { QRCodeDisplay } from "@/components/dashboard/QRCodeDisplay";
 import Link from "next/link";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { getTestData, shouldUseTestData } from "./testData";
+import { 
+  prepareWorkDistributionData,
+  prepareArrivalTimeData,
+  prepareBreaksData,
+  prepareLocationData
+} from "@/utils/chartDataHelpers";
+import { BreaksAnalysisChart } from "@/components/dashboard/BreaksAnalysisChart";
+import { LocationAnalysisChart } from "@/components/dashboard/LocationAnalysisChart";
 
 export default function AdminDashboardPage() {
   const [dashboardData, setDashboardData] = useState<any>(null);
@@ -38,6 +48,10 @@ export default function AdminDashboardPage() {
   
   // État pour le menu contextuel de navigation rapide
   const [showContextMenu, setShowContextMenu] = useState<{x: number, y: number, id: string} | null>(null);
+  const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0 });
+  const [selectedItem, setSelectedItem] = useState<any>(null);
+  // État pour les sous-onglets d'analytiques
+  const [analyticsCategory, setAnalyticsCategory] = useState<"worktime" | "schedule" | "breaks" | "location">("worktime");
 
   // Fonction pour récupérer les notifications
   const fetchNotifications = async () => {
@@ -629,6 +643,11 @@ export default function AdminDashboardPage() {
     setShowContextMenu(null);
   };
 
+  // Fonction pour changer la catégorie d'analytiques
+  const handleAnalyticsCategoryChange = (category: "worktime" | "schedule" | "breaks" | "location") => {
+    setAnalyticsCategory(category);
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -734,19 +753,181 @@ export default function AdminDashboardPage() {
         </TabsContent>
         
         <TabsContent value="analytics" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            <WorkTimeChart
-              title="Temps de travail moyen"
-              data={dashboardData?.workTimeData || []}
-              className="col-span-3"
-            />
-          </div>
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            <ActivityChart
-              title="Activité hebdomadaire"
-              data={dashboardData?.weeklyActivity || []}
-              className="col-span-3"
-            />
+          <div className="grid gap-4">
+            {/* Navigation des sous-onglets d'analytiques */}
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-medium">Analytiques détaillées</h3>
+                </div>
+                <div className="inline-flex rounded-md border bg-muted p-1 text-muted-foreground mb-6">
+                  <button 
+                    className={`inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ${analyticsCategory === "worktime" ? "bg-blue-100 text-blue-800 border border-blue-300" : ""}`}
+                    onClick={() => handleAnalyticsCategoryChange("worktime")}
+                    title="Analyses du temps de travail et productivité"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                      <circle cx="12" cy="12" r="10" />
+                      <polyline points="12 6 12 12 16 14" />
+                    </svg>
+                    Temps de travail
+                  </button>
+                  <button 
+                    className={`inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ${analyticsCategory === "schedule" ? "bg-purple-100 text-purple-800 border border-purple-300" : ""}`}
+                    onClick={() => handleAnalyticsCategoryChange("schedule")}
+                    title="Analyse des horaires d'arrivée et départ"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                      <rect width="18" height="18" x="3" y="4" rx="2" ry="2" />
+                      <line x1="16" x2="16" y1="2" y2="6" />
+                      <line x1="8" x2="8" y1="2" y2="6" />
+                      <line x1="3" x2="21" y1="10" y2="10" />
+                      <path d="M8 14h.01" />
+                      <path d="M12 14h.01" />
+                      <path d="M16 14h.01" />
+                      <path d="M8 18h.01" />
+                      <path d="M12 18h.01" />
+                      <path d="M16 18h.01" />
+                    </svg>
+                    Horaires
+                  </button>
+                  <button 
+                    className={`inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ${analyticsCategory === "breaks" ? "bg-amber-100 text-amber-800 border border-amber-300" : ""}`}
+                    onClick={() => handleAnalyticsCategoryChange("breaks")}
+                    title="Analyse des pauses et de leur durée"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                      <path d="M18 8h1a4 4 0 0 1 0 8h-1" />
+                      <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z" />
+                      <line x1="6" x2="6" y1="1" y2="4" />
+                      <line x1="10" x2="10" y1="1" y2="4" />
+                      <line x1="14" x2="14" y1="1" y2="4" />
+                    </svg>
+                    Pauses
+                  </button>
+                  <button 
+                    className={`inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ${analyticsCategory === "location" ? "bg-green-100 text-green-800 border border-green-300" : ""}`}
+                    onClick={() => handleAnalyticsCategoryChange("location")}
+                    title="Analyse de la répartition géographique"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+                      <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
+                      <circle cx="12" cy="10" r="3" />
+                    </svg>
+                    Localisation
+                  </button>
+                </div>
+                
+                {/* Filtres communs pour tous les graphiques d'analytiques */}
+                <div className="flex flex-wrap items-center gap-4 mb-4">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm font-medium">Période :</span>
+                    <select 
+                      className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      value={selectedPeriod}
+                      onChange={(e) => handlePeriodChange(e.target.value as "day" | "week" | "month" | "year")}
+                    >
+                      <option value="day">Jour</option>
+                      <option value="week">Semaine</option>
+                      <option value="month">Mois</option>
+                      <option value="year">Année</option>
+                    </select>
+                  </div>
+                  
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm font-medium">Collaborateur :</span>
+                    <select 
+                      className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      value={selectedCollaborator || ""}
+                      onChange={(e) => handleCollaboratorChange(e.target.value || null)}
+                    >
+                      <option value="">Tous les collaborateurs</option>
+                      {getUniqueCollaborators().map(collaborator => (
+                        <option key={collaborator.id} value={collaborator.id}>
+                          {collaborator.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            
+            {/* Contenu conditionnel basé sur la catégorie sélectionnée */}
+            {analyticsCategory === "worktime" && (
+              <>
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  <WorkTimeChart
+                    title="Temps de travail moyen"
+                    data={dashboardData?.workTimeData || []}
+                    className="col-span-3"
+                  />
+                </div>
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  <ActivityChart
+                    title="Activité hebdomadaire"
+                    data={dashboardData?.weeklyActivity || []}
+                    className="col-span-3"
+                  />
+                </div>
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  <WorkDistributionChart
+                    title="Répartition du temps de travail par collaborateur"
+                    data={prepareWorkDistributionData(getFilteredActivities())}
+                    className="col-span-3"
+                  />
+                </div>
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  <ArrivalTimeChart
+                    title="Temps d'arrivée moyen"
+                    data={prepareArrivalTimeData(getFilteredActivities())}
+                    className="col-span-3"
+                  />
+                </div>
+              </>
+            )}
+            
+            {analyticsCategory === "schedule" && (
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                <ArrivalTimeChart
+                  title="Distribution des heures d'arrivée"
+                  data={prepareArrivalTimeData(getFilteredActivities())}
+                  className="col-span-3"
+                />
+              </div>
+            )}
+            
+            {analyticsCategory === "breaks" && (
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                <BreaksAnalysisChart
+                  data={prepareBreaksData(getFilteredActivities(), selectedPeriod)}
+                  title="Analyse des pauses"
+                  className="col-span-3"
+                />
+              </div>
+            )}
+            
+            {analyticsCategory === "location" && (
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                <Card className="col-span-3">
+                  <CardHeader>
+                    <CardTitle>Répartition des lieux de travail</CardTitle>
+                    <CardDescription>
+                      Analyse de la fréquentation des différents lieux de travail par les collaborateurs
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <LocationAnalysisChart 
+                      title="Répartition par lieu de travail" 
+                      data={getFilteredActivities().length > 0 
+                        ? prepareLocationData(getFilteredActivities())
+                        : []}
+                      className=""
+                    />
+                  </CardContent>
+                </Card>
+              </div>
+            )}
           </div>
         </TabsContent>
         
@@ -1200,7 +1381,7 @@ export default function AdminDashboardPage() {
                     </TableHeader>
                     <TableBody>
                       {getPaginatedData().length > 0 ? (
-                        getPaginatedData().map((item: any, i) => {
+                        getPaginatedData().map((item: any, i: number) => {
                           const isOngoing = !item.checkOutTimestamp;
                           return (
                             <TableRow 
