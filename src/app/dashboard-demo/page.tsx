@@ -9,6 +9,16 @@ const QRCodeGenerator = dynamic(() => import("@/components/QRCodeGenerator"), {
   ssr: false,
 });
 
+// Import dynamique du composant RequestTabs
+const RequestTabs = dynamic(() => import("@/components/leave-request/RequestTabs"), {
+  ssr: false,
+});
+
+// Import dynamique du composant RequestsTable
+const RequestsTable = dynamic(() => import("@/components/leave-request/RequestsTable"), {
+  ssr: false,
+});
+
 export default function DashboardDemoPage() {
   const [baseUrl, setBaseUrl] = useState("");
   const { data: session } = useSession();
@@ -49,6 +59,27 @@ export default function DashboardDemoPage() {
             title="Check-out"
             description="Scannez ce QR code pour enregistrer votre départ"
           />
+        </div>
+
+        {/* Section de demandes d'absence et congés */}
+        <div className="mt-16">
+          <div className="text-center mb-8">
+            <h2 className="text-2xl font-bold text-gray-900">
+              Gestion des absences et congés
+            </h2>
+            <p className="mt-2 text-lg text-gray-600">
+              Soumettez vos demandes et suivez leur statut
+            </p>
+          </div>
+          
+          <div className="bg-white shadow rounded-lg overflow-hidden mb-8">
+            <RequestTabs />
+          </div>
+          
+          {/* Tableau récapitulatif des demandes */}
+          <div className="bg-white shadow rounded-lg overflow-hidden p-6">
+            <RequestsTable />
+          </div>
         </div>
       </div>
     </div>
