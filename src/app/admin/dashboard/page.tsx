@@ -716,6 +716,7 @@ export default function AdminDashboardPage() {
           </TabsTrigger>
           <TabsTrigger value="qrcodes">QR Codes</TabsTrigger>
           <TabsTrigger value="history">Historique</TabsTrigger>
+          <TabsTrigger value="demande">Demande</TabsTrigger>
         </TabsList>
         
         <TabsContent value="overview" className="space-y-4">
@@ -1830,6 +1831,70 @@ export default function AdminDashboardPage() {
                       <span><strong>Vue annuelle:</strong> Cumule les heures travaillées par année</span>
                     </div>
                   </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="demande" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-1">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle>Gestion des demandes</CardTitle>
+                <div className="text-sm text-muted-foreground">
+                  {dashboardData?.requests?.length || 0} demande(s)
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="mb-4 flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm font-medium">Statut :</span>
+                    <select 
+                      className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      defaultValue="all"
+                    >
+                      <option value="all">Toutes les demandes</option>
+                      <option value="pending">En attente</option>
+                      <option value="approved">Approuvées</option>
+                      <option value="rejected">Rejetées</option>
+                    </select>
+                  </div>
+                  
+                  <button 
+                    className="inline-flex items-center justify-center rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+                    title="Exporter les données filtrées actuelles au format CSV"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                      <polyline points="7 10 12 15 17 10"></polyline>
+                      <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                    Exporter CSV
+                  </button>
+                </div>
+                
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Demandeur</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Date de soumission</TableHead>
+                        <TableHead>Statut</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      <TableRow>
+                        <TableCell colSpan={5} className="h-24 text-center">
+                          <div className="text-center py-4 text-gray-500">
+                            Aucune demande trouvée
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
                 </div>
               </CardContent>
             </Card>
