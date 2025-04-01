@@ -199,10 +199,10 @@ export default function RequestsTable() {
                 Jours
               </th>
               <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Soumission
+                Statut
               </th>
               <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Statut
+                Soumission
               </th>
             </tr>
           </thead>
@@ -249,6 +249,12 @@ export default function RequestsTable() {
                     {request.type === 'absence' ? request.days : request.totalDays} jour{(request.type === 'absence' ? request.days : request.totalDays) > 1 ? 's' : ''}
                   </td>
                   
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusStyles[request.status]}`}>
+                      {statusLabels[request.status]}
+                    </span>
+                  </td>
+                  
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     <div>Soumis le {formatDateTime(request.submittedAt)}</div>
                     {request.updatedAt && (
@@ -256,12 +262,6 @@ export default function RequestsTable() {
                         Mise à jour le {formatDateTime(request.updatedAt)}
                       </div>
                     )}
-                  </td>
-                  
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusStyles[request.status]}`}>
-                      {statusLabels[request.status]}
-                    </span>
                   </td>
                 </tr>
               ))
