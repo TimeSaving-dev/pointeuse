@@ -1,194 +1,379 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
+import { format } from 'date-fns';
+import { CalendarIcon, Clock } from 'lucide-react';
+import { fr } from 'date-fns/locale';
+import { Button } from '@/components/ui/button';
+import { Calendar } from '@/components/ui/calendar';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { cn } from '@/lib/utils';
+import { Textarea } from '@/components/ui/textarea';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { CheckCircle, XCircle } from "lucide-react";
+import { toast } from '@/components/ui/use-toast';
+import { Input } from '@/components/ui/input';
 
-export default function LeaveRequestForm() {
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [reason, setReason] = useState("");
-  const [status] = useState("pending");
-  const [dateError, setDateError] = useState("");
-  const [minDate, setMinDate] = useState("");
-
-  // Initialiser la date minimum (aujourd'hui) au format YYYY-MM-DD
-  useEffect(() => {
+// Schéma de validation pour le formulaire
+const formSchema = z.object({
+  absenceDate: z.date({
+    required_error: "Une date d'absence est requise.",
+  }).refine(date => {
     const today = new Date();
-    const formattedDate = today.toISOString().split('T')[0];
-    setMinDate(formattedDate);
-  }, []);
+    today.setHours(0, 0, 0, 0);
+    return date >= today;
+  }, {
+    message: "La date d'absence doit être dans le futur.",
+  }),
+  period: z.enum(["MORNING", "AFTERNOON", "FULL_DAY", "CUSTOM"], {
+    required_error: "Une période d'absence est requise."
+  }),
+  reason: z.enum(["FAMILY", "SICK_CHILD", "MEDICAL", "OTHER"], {
+    required_error: "Un motif d'absence est requis."
+  }),
+  startTime: z.string().optional(),
+  endTime: z.string().optional(),
+  comment: z.string().optional(),
+}).refine(
+  (data) => data.period !== "CUSTOM" || (data.startTime && data.endTime),
+  {
+    message: "Les heures de début et de fin sont requises pour une période personnalisée",
+    path: ["startTime"]
+  }
+);
 
-  // Statut de la demande - styles
-  const statusStyles = {
-    pending: "bg-yellow-100 text-yellow-800",
-    approved: "bg-green-100 text-green-800",
-    rejected: "bg-red-100 text-red-800"
-  };
+// Type déduit du schéma
+type FormValues = z.infer<typeof formSchema>;
 
-  const statusDotStyles = {
-    pending: "bg-yellow-500",
-    approved: "bg-green-500",
-    rejected: "bg-red-500"
-  };
+// Périodes d'absence disponibles
+const absencePeriods = [
+  { id: "MORNING", label: "Matin" },
+  { id: "AFTERNOON", label: "Après-midi" },
+  { id: "FULL_DAY", label: "Journée complète" },
+  { id: "CUSTOM", label: "Horaires personnalisés" }
+];
 
-  const statusLabels = {
-    pending: "En attente d'approbation",
-    approved: "Approuvé",
-    rejected: "Refusé"
-  };
+// Raisons d'absence disponibles
+const absenceReasons = [
+  { id: "FAMILY", label: "Évènement familial" },
+  { id: "SICK_CHILD", label: "Enfant malade" },
+  { id: "MEDICAL", label: "Rendez-vous médical" },
+  { id: "OTHER", label: "Autre" },
+];
 
-  // Validation des dates
-  const validateDates = (start, end) => {
-    if (start && end) {
-      const startDate = new Date(start);
-      const endDate = new Date(end);
+export function LeaveRequestForm() {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitStatus, setSubmitStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [errorMessage, setErrorMessage] = useState('');
+
+  // Initialisation du formulaire
+  const form = useForm<FormValues>({
+    resolver: zodResolver(formSchema),
+    defaultValues: {
+      period: "FULL_DAY",
+      comment: '',
+    },
+  });
+
+  // Gestion de la soumission du formulaire
+  const onSubmit = async (data: FormValues) => {
+    setIsSubmitting(true);
+    setSubmitStatus('loading');
+    
+    try {
+      // Préparer les données pour l'API
+      const payload = {
+        absenceDate: format(data.absenceDate, 'yyyy-MM-dd'),
+        period: data.period,
+        reason: data.reason,
+        startTime: data.startTime,
+        endTime: data.endTime,
+        userComment: data.comment || undefined
+      };
       
-      if (endDate < startDate) {
-        setDateError("La date de fin doit être postérieure à la date de début.");
-        return false;
+      // Envoyer la demande à l'API
+      const response = await fetch('/api/absence-requests', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+      
+      const result = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(result.error || 'Une erreur est survenue lors de la soumission');
       }
+      
+      // Succès
+      setSubmitStatus('success');
+      toast({
+        title: "Demande envoyée",
+        description: "Votre demande d'absence a été soumise avec succès.",
+      });
+      
+      // Réinitialiser le formulaire après un succès
+      form.reset();
+    } catch (error) {
+      // Erreur
+      setSubmitStatus('error');
+      if (error instanceof Error) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage('Une erreur inconnue est survenue');
+      }
+      
+      toast({
+        variant: "destructive",
+        title: "Erreur",
+        description: "Un problème est survenu lors de l'envoi de votre demande.",
+      });
+    } finally {
+      setIsSubmitting(false);
     }
-    setDateError("");
-    return true;
   };
 
-  // Gestionnaire de changement de date de début
-  const handleStartDateChange = (e) => {
-    const newStartDate = e.target.value;
-    setStartDate(newStartDate);
-    validateDates(newStartDate, endDate);
-
-    // Si la date de fin est antérieure à la nouvelle date de début, on la réinitialise
-    if (endDate && new Date(endDate) < new Date(newStartDate)) {
-      setEndDate("");
-    }
-  };
-
-  // Gestionnaire de changement de date de fin
-  const handleEndDateChange = (e) => {
-    const newEndDate = e.target.value;
-    setEndDate(newEndDate);
-    validateDates(startDate, newEndDate);
-  };
-
-  // Calcul du nombre de jours
-  const calculateDays = () => {
-    if (!startDate || !endDate || dateError) return 0;
-    
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    
-    // Vérifier que les dates sont valides
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
-    
-    // Calculer la différence en jours
-    const diffTime = Math.abs(end - start);
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // +1 pour inclure le jour de fin
-    
-    return diffDays;
-  };
-
-  const dayCount = calculateDays();
-
-  // Gestionnaire de soumission
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!validateDates(startDate, endDate)) {
-      return;
-    }
-
-    // Ici, on pourrait ajouter la logique pour soumettre la demande
-    console.log("Demande soumise:", { startDate, endDate, reason, days: dayCount });
-  };
+  // Vérifier si la période est personnalisée
+  const isCustomPeriod = form.watch('period') === 'CUSTOM';
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6 bg-white p-6 rounded-lg shadow-sm">
-      <div className="text-xl font-semibold text-gray-900">Demande d'absence</div>
-      
-      {/* Sélection des dates */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-gray-700">Date de début</label>
-          <div className="relative">
-            <input 
-              type="date"
-              value={startDate}
-              onChange={handleStartDateChange}
-              min={minDate}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              required
-            />
-          </div>
-        </div>
+    <Card className="w-full">
+      <CardHeader>
+        <CardTitle>Demande d'absence</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {submitStatus === 'success' && (
+          <Alert className="mb-4 bg-green-50 text-green-700 border-green-200">
+            <CheckCircle className="h-4 w-4" />
+            <AlertTitle>Demande soumise avec succès</AlertTitle>
+            <AlertDescription>
+              Votre demande d'absence a été enregistrée et est en attente d'approbation.
+            </AlertDescription>
+          </Alert>
+        )}
         
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-gray-700">Date de fin</label>
-          <div className="relative">
-            <input 
-              type="date"
-              value={endDate}
-              onChange={handleEndDateChange}
-              min={startDate || minDate}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              required
+        {submitStatus === 'error' && (
+          <Alert className="mb-4 bg-red-50 text-red-700 border-red-200">
+            <XCircle className="h-4 w-4" />
+            <AlertTitle>Erreur</AlertTitle>
+            <AlertDescription>
+              {errorMessage || "Un problème est survenu lors de l'envoi de votre demande."}
+            </AlertDescription>
+          </Alert>
+        )}
+        
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="absenceDate"
+                render={({ field }) => (
+                  <FormItem className="flex flex-col">
+                    <FormLabel className="font-medium">Date d'absence</FormLabel>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <FormControl>
+                          <Button
+                            variant={"outline"}
+                            className={cn(
+                              "pl-3 text-left font-normal border-gray-300 hover:bg-gray-100",
+                              !field.value && "text-gray-700"
+                            )}
+                          >
+                            {field.value ? (
+                              format(field.value, 'PPP', { locale: fr })
+                            ) : (
+                              <span>Sélectionnez une date</span>
+                            )}
+                            <CalendarIcon className="ml-auto h-4 w-4 opacity-100" />
+                          </Button>
+                        </FormControl>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0 bg-white shadow-lg border border-gray-200" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={field.value}
+                          onSelect={field.onChange}
+                          disabled={(date) => {
+                            const today = new Date();
+                            today.setHours(0, 0, 0, 0);
+                            return date < today || date.getDay() === 0 || date.getDay() === 6;
+                          }}
+                          locale={fr}
+                          className="text-gray-900"
+                        />
+                      </PopoverContent>
+                    </Popover>
+                    <FormMessage className="text-red-600" />
+                  </FormItem>
+                )}
+              />
+              
+              <FormField
+                control={form.control}
+                name="period"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="font-medium">Période</FormLabel>
+                    <Select 
+                      value={field.value} 
+                      onValueChange={field.onChange}
+                    >
+                      <FormControl>
+                        <SelectTrigger className="border-gray-300 text-gray-900 hover:bg-gray-100">
+                          <SelectValue className="text-gray-900" placeholder="Sélectionnez une période" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent className="bg-white border border-gray-200 shadow-lg">
+                        {absencePeriods.map(period => (
+                          <SelectItem key={period.id} value={period.id} className="text-gray-900 hover:bg-gray-100">
+                            {period.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage className="text-red-600" />
+                  </FormItem>
+                )}
+              />
+            </div>
+            
+            {isCustomPeriod && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="startTime"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="font-medium">Heure de début</FormLabel>
+                      <FormControl>
+                        <div className="flex items-center">
+                          <Input
+                            type="time"
+                            {...field}
+                            className="flex-1 border-gray-300 text-gray-900"
+                          />
+                          <Clock className="ml-2 h-4 w-4 text-gray-700" />
+                        </div>
+                      </FormControl>
+                      <FormMessage className="text-red-600" />
+                    </FormItem>
+                  )}
+                />
+                
+                <FormField
+                  control={form.control}
+                  name="endTime"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="font-medium">Heure de fin</FormLabel>
+                      <FormControl>
+                        <div className="flex items-center">
+                          <Input
+                            type="time"
+                            {...field}
+                            className="flex-1 border-gray-300 text-gray-900"
+                          />
+                          <Clock className="ml-2 h-4 w-4 text-gray-700" />
+                        </div>
+                      </FormControl>
+                      <FormMessage className="text-red-600" />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
+            
+            <FormField
+              control={form.control}
+              name="reason"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="font-medium">Motif d'absence</FormLabel>
+                  <Select 
+                    value={field.value} 
+                    onValueChange={field.onChange}
+                  >
+                    <FormControl>
+                      <SelectTrigger className="border-gray-300 text-gray-900 hover:bg-gray-100">
+                        <SelectValue className="text-gray-900" placeholder="Sélectionnez un motif" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent className="bg-white border border-gray-200 shadow-lg">
+                      {absenceReasons.map(reason => (
+                        <SelectItem key={reason.id} value={reason.id} className="text-gray-900 hover:bg-gray-100">
+                          {reason.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage className="text-red-600" />
+                </FormItem>
+              )}
             />
-          </div>
-        </div>
-      </div>
-      
-      {/* Message d'erreur pour les dates */}
-      {dateError && (
-        <div className="text-red-500 text-sm mt-1">
-          {dateError}
-        </div>
-      )}
-      
-      {/* Compteur de jours */}
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-gray-700">Nombre de jours</label>
-        <div className="w-full md:w-1/4 rounded-md border border-gray-300 px-3 py-2 text-gray-900 bg-gray-50">
-          {dayCount > 0 ? `${dayCount} jour${dayCount > 1 ? 's' : ''}` : 'Sélectionnez les dates'}
-        </div>
-      </div>
-      
-      {/* Raison d'absence */}
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-gray-700">Raison de l'absence</label>
-        <select 
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          required
-        >
-          <option value="">Sélectionner une raison</option>
-          <option value="maladie">Maladie</option>
-          <option value="familiale">Raison familiale</option>
-          <option value="medecin">Rendez-vous médical</option>
-          <option value="enfant">Enfant malade</option>
-          <option value="autre">Autre</option>
-        </select>
-      </div>
-      
-      {/* Statut de la demande */}
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-gray-700">Statut de la demande</label>
-        <div className="flex items-center">
-          <span className={`inline-flex items-center rounded-full ${statusStyles[status]} px-3 py-1 text-sm font-medium`}>
-            <span className={`mr-1.5 h-2 w-2 rounded-full ${statusDotStyles[status]}`}></span>
-            {statusLabels[status]}
-          </span>
-        </div>
-      </div>
-      
-      {/* Bouton de soumission */}
-      <div className="pt-4">
-        <button
-          type="submit"
-          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-          disabled={!startDate || !endDate || !reason || dateError !== ""}
-        >
-          Soumettre la demande
-        </button>
-      </div>
-    </form>
+            
+            <FormField
+              control={form.control}
+              name="comment"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="font-medium">Commentaire (optionnel)</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      placeholder="Précisions sur votre absence..."
+                      className="resize-none border-gray-300 text-gray-900"
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage className="text-red-600" />
+                </FormItem>
+              )}
+            />
+            
+            <div className="mt-6">
+            <Button 
+              type="submit" 
+              className="w-full"
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? (
+                <>
+                    <span className="animate-spin mr-2">⏳</span>
+                  Envoi en cours...
+                </>
+              ) : (
+                "Soumettre la demande"
+              )}
+            </Button>
+            </div>
+          </form>
+        </Form>
+      </CardContent>
+    </Card>
   );
 } 
